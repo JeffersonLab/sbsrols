@@ -18,9 +18,9 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= ti_master_list.so ti_slave_list.so mpd_list.so mpd_slave_list.so mpd5_ssp_list.so
+VMEROL			= ti_master_list.so ti_slave_list.so sfi_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -ltd -lts -lsd -lmpd -lconfig -lssp
+ROLLIBS			= -lsfifb
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -88,11 +88,11 @@ test_list_v3.so: test_list_v3.c
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
-mpd_slave_list.so: mpd_list.c
+blah_slave_list.so: mpd_list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
-mpd_list.so: mpd_list.c
+blah_list.so: mpd_list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
