@@ -29,6 +29,12 @@
 #define BLOCKLEVEL 1
 #define BUFFERLEVEL 10
 
+/*
+  enable triggers (random or fixed rate) from internal pulser
+ */
+/* #define INTRANDOMPULSER */
+#define INTFIXEDPULSER
+
 /****************************************
  *  DOWNLOAD
  ****************************************/
@@ -63,7 +69,11 @@ rocDownload()
    *      TI_TRIGGER_TSREV2    4  Ribbon cable from Legacy TS module
    *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
    */
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
+#else
   tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+#endif
 
   /* Enable set specific TS input bits (1-6) */
   tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
@@ -142,16 +152,27 @@ rocGo()
   printf("rocGo: Block Level set to %d\n",blockLevel);
 
   /* Enable/Set Block Level on modules, if needed, here */
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  printf("************************************************************\n");
+  printf("%s: TI Configured for Internal Pulser Triggers\n",
+	 __func__);
+  printf("************************************************************\n");
+#endif
 
   /* Example: How to start internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
   tiSetRandomTrigger(1,0x7);
 #elif defined (INTFIXEDPULSER)
-  /* Enable fixed rate with period (ns) 120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
-     - Generated 1000 times */
-  tiSoftTrig(1,1000,700,0);
+  /*
+    Enable fixed rate with period (ns)
+    120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
+     - arg2 = 0xffff - Continuous
+     - arg2 < 0xffff = arg2 times
+  */
+  tiSoftTrig(1,0xffff,700,0);
 #endif
+
 
 }
 
