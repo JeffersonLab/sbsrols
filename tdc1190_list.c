@@ -60,7 +60,7 @@ rocDownload()
    *   TI SETUP
    *****************/
 /* #define INTRANDOMPULSER */
-#ifdef INTRANDOMPULSER
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
 #else
   tiSetTriggerSource(TI_TRIGGER_TSINPUTS);
@@ -136,11 +136,10 @@ rocGo()
   blockLevel = tiGetCurrentBlockLevel();
   printf("rocGo: Block Level set to %d\n",blockLevel);
 
+  /* Enable/Set Block Level on modules, if needed, here */
   tdc1190GSetBLTEventNumber(blockLevel);
 
-
 #ifdef TI_MASTER
-  /* Enable/Set Block Level on modules, if needed, here */
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   printf("************************************************************\n");
   printf("%s: TI Configured for Internal Pulser Triggers\n",
