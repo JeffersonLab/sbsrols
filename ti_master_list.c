@@ -32,8 +32,8 @@
 /*
   enable triggers (random or fixed rate) from internal pulser
  */
-/* #define INTRANDOMPULSER */
-#define INTFIXEDPULSER
+#define INTRANDOMPULSER
+/* #define INTFIXEDPULSER */
 
 /****************************************
  *  DOWNLOAD
@@ -242,3 +242,10 @@ rocCleanup()
   printf("%s: Reset all Modules\n",__FUNCTION__);
 
 }
+
+
+/*
+  Local Variables:
+  compile-command: "make -k -B ti_master_list.so"
+  End:
+ */
