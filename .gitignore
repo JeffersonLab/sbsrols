@@ -1,0 +1,16 @@
+# Temporary/backup files
+*~
+\#*
+# Dep/Binaries
+*.d
+*.d.*
+*.o
+*.lo
+*.Po
+*.Plo
+*.a
+*.la
+*.so
+# Built documentation
+doc/doxygen/C/*
+*.log

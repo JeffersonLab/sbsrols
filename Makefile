@@ -18,7 +18,7 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= tdc1190_list.so c792_list.so ti_master_list.so bbhodo_list.so
+VMEROL			= bbhodo_list.so bbhodo_slave_list.so tdc1190_list.so c792_list.so ti_master_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
 ROLLIBS			= -lc1190 -lc792 -lsd -lts
 
