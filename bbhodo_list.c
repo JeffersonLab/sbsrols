@@ -11,10 +11,14 @@
 #define MAX_EVENT_POOL     400
 #define MAX_EVENT_LENGTH   1024*10      /* Size in Bytes */
 
-/* Define TI Type (TI_MASTER or TI_SLAVE) */
-#define TI_MASTER
+#ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
+#else
+/* TS trigger source (e.g. fiber), POLL for available data */
+#define TI_READOUT TI_READOUT_TS_POLL
+#endif
+
 /* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
 /* GEO slot 21 */
 #define TI_ADDR    (21 << 19)
@@ -34,7 +38,7 @@
 /*
   enable triggers (random or fixed rate) from internal pulser
  */
-/* #define INTRANDOMPULSER */
+#define INTRANDOMPULSER
 /* #define INTFIXEDPULSER */
 
 /* CAEN 792 specific definitions */
@@ -57,19 +61,14 @@ void rocTrigger(int arg);
 void
 rocDownload()
 {
-  /* Setup Address and data modes for DMA transfers
-   *
-   *  vmeDmaConfig(addrType, dataType, sstMode);
-   *
-   *  addrType = 0 (A16)    1 (A24)    2 (A32)
-   *  dataType = 0 (D16)    1 (D32)    2 (BLK32) 3 (MBLK) 4 (2eVME) 5 (2eSST)
-   *  sstMode  = 0 (SST160) 1 (SST267) 2 (SST320)
-   */
-  vmeDmaConfig(1,3,0);
+  // FIXME: This is debug stuff.  remove when satisfied.
+  vmeSetQuietFlag(0);
+
 
   /* Define BLock Level */
   blockLevel = BLOCKLEVEL;
 
+#ifdef TI_MASTER
   /*****************
    *   TI SETUP
    *****************/
@@ -105,10 +104,16 @@ rocDownload()
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
+#endif
 
   tiStatus(0);
 
-  c792Init(0x100000,0x80000,2,0);
+  c792Init(0x200000,0x80000,2,0);
+  int iadc;
+  for(iadc = 0; iadc < Nc792; iadc++)
+    {
+      c792SetGeoAddress(iadc, iadc+3);
+    }
 
   printf("rocDownload: User Download Executed\n");
 
@@ -132,9 +137,9 @@ rocPrestart()
       c792Sparse(iadc,0,0);
       c792Clear(iadc);
       c792EnableBerr(iadc);
-
-      c792Status(iadc,0,0);
+      c792BitSet2(iadc, 1<<14);
     }
+  c792GStatus(0);
 
   int itdc;
 
@@ -154,6 +159,7 @@ rocPrestart()
     {
       tdc1190SetTriggerMatchingMode(itdc);
       tdc1190SetEdgeResolution(itdc,100);
+      tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
     }
 
   tdc1190GStatus(1);
@@ -165,7 +171,7 @@ rocPrestart()
 void
 rocGo()
 {
-
+  tiSetBlockLimit(0);
   /* Print out the Run Number and Run Type (config id) */
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
@@ -175,9 +181,14 @@ rocGo()
   printf("rocGo: Block Level set to %d\n",blockLevel);
 
   /* Enable/Set Block Level on modules, if needed, here */
+  int iadc;
+  for(iadc = 0; iadc < Nc792; iadc++)
+    c792Enable(iadc);
+
+
   tdc1190GSetBLTEventNumber(blockLevel);
 
-
+#ifdef TI_MASTER
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   printf("************************************************************\n");
   printf("%s: TI Configured for Internal Pulser Triggers\n",
@@ -198,6 +209,7 @@ rocGo()
   */
   tiSoftTrig(1,0xffff,700,0);
 #endif
+#endif
 
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 }
@@ -206,6 +218,7 @@ void
 rocEnd()
 {
 
+#ifdef TI_MASTER
   /* Example: How to stop internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Disable random trigger */
@@ -214,12 +227,14 @@ rocEnd()
   /* Disable Fixed Rate trigger */
   tiSoftTrig(1,0,700,0);
 #endif
+#endif
 
   int iadc;
   for(iadc = 0; iadc < Nc792; iadc++)
     {
-      c792Status(iadc,0,0);
+      c792Disable(iadc);
     }
+  c792GStatus(0);
 
   tdc1190GStatus(0);
 
@@ -291,6 +306,11 @@ rocTrigger(int arg)
 
   int iadc;
 
+  /* A24 - BLT32 (1,2,0) works.
+     I could not get A24 - BLT64 (1,3,0) to work.
+     Might need starting address to be 8-byte aligned */
+  vmeDmaConfig(1,2,0);
+
   /* Check if an Event is available */
   scanmask = c792ScanMask();
   datascan = c792GDReady(scanmask, 1000);
@@ -300,14 +320,18 @@ rocTrigger(int arg)
     {
       for(iadc = 0; iadc < Nc792; iadc++)
 	{
-	  dCnt = c792ReadBlock(iadc,dma_dabufp,MAX_ADC_DATA);
+	  dCnt = c792ReadBlock(iadc,dma_dabufp,MAX_ADC_DATA+40);
 	  if(dCnt <= 0)
 	    {
-	      logMsg("ERROR: ADC %2d Read Failed - Status 0x%x\n",
+	      logMsg("%4d: ERROR: ADC %2d Read Failed - Status 0x%x\n",
+		     tiGetIntCount(),
 		     iadc, dCnt,0,0,0,0);
 	      *dma_dabufp++ = LSWAP(iadc);
-	      *dma_dabufp++ = LSWAP(0xda000bad);
+	      *dma_dabufp++ = LSWAP(0xda00bad1);
 	      c792Clear(iadc);
+#ifdef TI_MASTER
+	      tiSetBlockLimit(20);
+#endif
 	    }
 	  else
 	    {
@@ -318,11 +342,15 @@ rocTrigger(int arg)
     }
   else
     {
-      logMsg("ERROR: datascan != scanmask for ADC  (0x%08x != 0x%08x)\n",
+      logMsg("%4d: ERROR: datascan != scanmask for ADC  (0x%08x != 0x%08x)\n",
+	     tiGetIntCount(),
 	     datascan,scanmask,0,0,0,0);
       *dma_dabufp++ = LSWAP(datascan);
       *dma_dabufp++ = LSWAP(scanmask);
-      *dma_dabufp++ = LSWAP(0xda000bad);
+      *dma_dabufp++ = LSWAP(0xda00bad2);
+#ifdef TI_MASTER
+      tiSetBlockLimit(20);
+#endif
 
       for(iadc = 0; iadc < Nc792; iadc++)
 	c792Clear(iadc);
@@ -346,6 +374,6 @@ rocCleanup()
 
 /*
   Local Variables:
-  compile-command: "make -k -B bbhodo_list.so"
+  compile-command: "make -k -B bbhodo_list.so bbhodo_slave_list.so"
   End:
  */

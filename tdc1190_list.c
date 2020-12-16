@@ -56,6 +56,7 @@ rocDownload()
    */
   vmeDmaConfig(2,5,2);
 
+#ifdef TI_MASTER
   /*****************
    *   TI SETUP
    *****************/
@@ -78,7 +79,6 @@ rocDownload()
   tiSetTriggerHoldoff(1, 10, 1);
   tiSetTriggerHoldoff(2, 10, 1);
 
-#ifdef TI_MASTER
   /* Set number of events per block */
   tiSetBlockLevel(BLOCKLEVEL);
 
