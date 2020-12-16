@@ -14,3 +14,4 @@
 # Built documentation
 doc/doxygen/C/*
 *.log
+test_list_v3.c
