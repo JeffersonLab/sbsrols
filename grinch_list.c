@@ -21,46 +21,47 @@
 // assume VETROCs are in sequential slots
 #define N_VETROCs 4 // was 1 (CA)
 
-/* Define Interrupt source and address */
-#define TI_MASTER
-#define TI_READOUT TI_READOUT_EXT_POLL  /* Poll for available data, external triggers */
-#define TI_ADDR    (21<<19)          /* GEO slot 4 */
+#ifdef TI_MASTER
+/* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
+#define TI_READOUT TI_READOUT_EXT_POLL
+#else
+/* TS trigger source (e.g. fiber), POLL for available data */
+#define TI_READOUT TI_READOUT_TS_POLL
+#endif
 
-/* Decision on whether or not to readout the TI for each block
-   - Comment out to disable readout
-*/
-#define TI_DATA_READOUT
+/* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
+/* GEO slot 21 */
+#define TI_ADDR    (21 << 19)
 
 #define FIBER_LATENCY_OFFSET 0x4A  /* measured longest fiber length */
+
+/*
+  enable triggers (random or fixed rate) from internal pulser
+ */
+#define INTRANDOMPULSER
+/* #define INTFIXEDPULSER */
+
 
 #include "dmaBankTools.h"
 #include "tiprimary_list.c" /* source required for CODA */
 
+#ifdef USE_SCALER
 #include "SIS3800.h"        /* scaler library */
+#define SCAL_ADDR 0xab2000
+static struct SIS3800CSREG *pScaler;
+#endif
+
+
 #include "vetrocLib.h"      /* VETROC library */
 #include "gtpLib.h"         /* GTP library */
 #include "c792Lib.h"        /* v792 library */
 
+#define MAX_ADC_DATA 34
 
 #include <time.h> /* CARLOS STUFF FOR DEBUGGING PURPOSES */
 
-#define SCAL_ADDR 0xab2000
-
-int use_scaler=0;
-
-static struct SIS3800CSREG *pScaler;
-
 static unsigned int vetrocSlotMask=0;
 int nvetroc=0;
-
-/* Redefine tsCrate according to TI_MASTER or TI_SLAVE */
-#ifdef TI_SLAVE
-int tsCrate=0;
-#else
-#ifdef TI_MASTER
-int tsCrate=1;
-#endif
-#endif
 
 #define use_vetroc 1
 
@@ -116,87 +117,70 @@ rocDownload()
   /* Stay in this mode by default, switch to A24DMA when talking to v792/v775 */
   vmeDmaConfig(A32DMA1);
 
-
-
+#ifdef TI_MASTER
   /*****************
    *   TI SETUP
    *****************/
-  int overall_offset=0x80;
 
-#ifndef TI_DATA_READOUT
-  /* Disable data readout */
-  tiDisableDataReadout();
-  /* Disable A32... where that data would have been stored on the TI */
-  tiDisableA32();
+  /*
+   * Set Trigger source
+   *    For the TI-Master, valid sources:
+   *      TI_TRIGGER_FPTRG     2  Front Panel "TRG" Input
+   *      TI_TRIGGER_TSINPUTS  3  Front Panel "TS" Inputs
+   *      TI_TRIGGER_TSREV2    4  Ribbon cable from Legacy TS module
+   *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
+   */
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Pulser enabled */
+#else
+  tiSetTriggerSource(TI_TRIGGER_FPTRG); /* FP TRG enabled */
 #endif
 
-  /* Set crate ID */
-  tiSetCrateID(0x01); /* ROC 1 */
-
-/*   tiSetTriggerSource(TI_TRIGGER_TSINPUTS); */
-  tiSetTriggerSource(TI_TRIGGER_FPTRG);
-
-  //tiSetTriggerPulse(1, 700, 5);
-
-  /* Set needed TS input bits */
-  tiEnableTSInput( TI_TSINPUT_1 );
-
   /* Load the trigger table that associates
-     pins 21/22 | 23/24 | 25/26 : trigger1
-     pins 29/30 | 31/32 | 33/34 : trigger2
-  */
+   *  pins 21/22 | 23/24 | 25/26 : trigger1
+   *  pins 29/30 | 31/32 | 33/34 : trigger2
+   */
   tiLoadTriggerTable(0);
 
-  tiSetTriggerHoldoff(8,4,1);
+  tiSetTriggerHoldoff(1,10,0);
+  tiSetTriggerHoldoff(2,10,0);
 
-/*   /\* Set the sync delay width to 0x40*32 = 2.048us *\/ */
-  tiSetSyncDelayWidth(0x54, 0x40, 1);
+  /* Set initial number of events per block */
+  tiSetBlockLevel(blockLevel);
 
-  /* Set the busy source to non-default value (no Switch Slot B busy) */
-  tiSetBusySource(TI_BUSY_LOOPBACK,1);
-
-/*   tiSetFiberDelay(10,0xcf); */
-
-
-  printf("Block level = %d\n",BLOCKLEVEL);
-
-  tiSetBlockLevel(BLOCKLEVEL);
+  /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
-
-  tiSetBlockLimit(0);
-  tiSetPrescale(0);
+#endif
 
   tiStatus(0);
 
   /* scalers */
 
+#ifdef USE_SCALER
   pScaler = 0;
 
-  if (use_scaler) {
+  printf("Setting up pScaler - address 0x%x\n",SCAL_ADDR);
 
-    printf("Setting up pScaler - address 0x%x\n",SCAL_ADDR);
+  res = vmeBusToLocalAdrs(0x39,(char *)SCAL_ADDR,(char **)&laddr);
 
-    res = vmeBusToLocalAdrs(0x39,(char *)SCAL_ADDR,(char **)&laddr);
+  if (res != 0) {
+    printf("Scaler: ERROR:  vmeBusToLocalAdrs: scaler at offset 0x%x address= 0x%x\n",SCAL_ADDR,laddr);
+  } else {
+    pScaler = (struct SIS3800CSREG *)laddr;
 
-    if (res != 0) {
-      printf("Scaler: ERROR:  vmeBusToLocalAdrs: scaler at offset 0x%x address= 0x%x\n",SCAL_ADDR,laddr);
-    } else {
-      pScaler = (struct SIS3800CSREG *)laddr;
+    vmeWrite32(&pScaler->reset,1);
+    vmeWrite32(&pScaler->csr,0x7000fd00);
+    vmeWrite32(&pScaler->enclk,1);
+    mode = 1;
+    vmeWrite32(&pScaler->csr,0x00000C00);
+    vmeWrite32(&pScaler->csr,mode<<2);
+    vmeWrite32(&pScaler->clear,1);
 
-      vmeWrite32(&pScaler->reset,1);
-      vmeWrite32(&pScaler->csr,0x7000fd00);
-      vmeWrite32(&pScaler->enclk,1);
-      mode = 1;
-      vmeWrite32(&pScaler->csr,0x00000C00);
-      vmeWrite32(&pScaler->csr,mode<<2);
-      vmeWrite32(&pScaler->clear,1);
+    printf("Scaler: Have setup and cleared \n");
 
-      printf("Scaler: Have setup and cleared \n");
-
-
-    }
 
   }
+#endif
 
 
 /********************************************************************************/
@@ -347,7 +331,6 @@ gtpSetTriggerClusterThreshold(1);
   if (use792>0) {
 
     printf("about to initialize CAEN 792 ADC \n");
-    vmeDmaConfig(A24DMA);   /* FADC DMA config set in interrupt handler */
     c792Init(V792_ADR1,V792_OFF,V792_NMOD,0);
     for (i=0; i<V792_NMOD ; i++) {
       c792Reset(i);
@@ -356,12 +339,14 @@ gtpSetTriggerClusterThreshold(1);
 
       c792Sparse(i,0,0);    /* pedestal supression DISABLED */
 
-      c792DisableBerr(i);
-      //c792EnableBerr(i); /* for 32bit block transfer */
+      c792EnableBerr(i); /* for 32bit block transfer */
 
       c792Status(i,0,0);
+
+      /* FIXME: make sure this is accurate */
+      c792SetGeoAddress(i, i+1);
     }
-    vmeDmaConfig(A32DMA1);
+    c792GStatus(0);
   }
 
   printf("rocDownload: User Download Executed\n");
@@ -374,6 +359,16 @@ gtpSetTriggerClusterThreshold(1);
 void
 rocPrestart()
 {
+#ifdef TI_MASTER
+  /* Set number of events per block (broadcasted to all connected TI Slaves)*/
+  tiSetBlockLevel(blockLevel);
+  printf("rocPrestart: Block Level set to %d\n",blockLevel);
+
+  tiSetBlockLimit(0);
+#endif
+
+  tiStatus(0);
+
   int vi, i, ii;
 
   if (use_vetroc) {
@@ -385,21 +380,15 @@ rocPrestart()
     }
   }
 
-  tiSyncReset(1);
-  usleep(1000);
-
   if (use792>0) {
-    vmeDmaConfig(A24DMA);
     for (i=0; i<V792_NMOD ; i++) {
       /* Pedestal suppression set here (should be read in by file) */
       c792ClearThresh(i);
       //for (ii=0;ii<32;ii++) { c792p[0]->threshold[ii]=0x0; }
       c792Clear(i);
     }
-    vmeDmaConfig(A32DMA1);
   }
 
-  tiStatus(0);
   printf("rocPrestart: User Prestart Executed\n");
 }
 
@@ -409,6 +398,15 @@ rocPrestart()
 void
 rocGo()
 {
+  /* Print out the Run Number and Run Type (config id) */
+  printf("rocGo: Activating Run Number %d, Config id = %d\n",
+	 rol->runNumber,rol->runType);
+
+  /* Get the current Block Level */
+  blockLevel = tiGetCurrentBlockLevel();
+  printf("rocGo: Block Level set to %d\n",blockLevel);
+
+  /* Enable/Set Block Level on modules, if needed, here */
   int i, vi;
 
   if (use_vetroc) {
@@ -421,14 +419,36 @@ rocGo()
     printf("%s: Current Block Level = %d\n",__FUNCTION__,tiGetCurrentBlockLevel());
 
     if (use792>0) {
-      vmeDmaConfig(A24DMA);
       for (i=0; i<V792_NMOD ; i++) {
 	c792Enable(i);
       }
-      vmeDmaConfig(A32DMA1);
     }
 
   }
+
+#ifdef TI_MASTER
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  printf("************************************************************\n");
+  printf("%s: TI Configured for Internal Pulser Triggers\n",
+	 __func__);
+  printf("************************************************************\n");
+#endif
+
+  /* Example: How to start internal pulser trigger */
+#ifdef INTRANDOMPULSER
+  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
+  tiSetRandomTrigger(1,0x7);
+#elif defined (INTFIXEDPULSER)
+  /*
+    Enable fixed rate with period (ns)
+    120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
+     - arg2 = 0xffff - Continuous
+     - arg2 < 0xffff = arg2 times
+  */
+  tiSoftTrig(1,0xffff,700,0);
+#endif
+#endif
+
 }
 
 /****************************************
@@ -438,14 +458,24 @@ void
 rocEnd()
 {
 
+#ifdef TI_MASTER
+  /* Example: How to stop internal pulser trigger */
+#ifdef INTRANDOMPULSER
+  /* Disable random trigger */
+  tiDisableRandomTrigger();
+#elif defined (INTFIXEDPULSER)
+  /* Disable Fixed Rate trigger */
+  tiSoftTrig(1,0,700,0);
+#endif
+#endif
+
   int i, islot;
 
   if (use792>0) {
-    vmeDmaConfig(A24DMA);
     for (i=0; i<V792_NMOD ; i++) {
       c792Disable(i);
     }
-    vmeDmaConfig(A32DMA1);
+    c792GStatus(0);
   }
 
   tiStatus(0);
@@ -479,32 +509,29 @@ rocTrigger(int evnum)
 
   tiSetOutputPort(1,0,0,0);
 
-  //  BLOCKOPEN(evnum,BT_BANK,BLOCKLEVEL);
+  /* Readout the trigger block from the TI
+     Trigger Block MUST be readout first */
+  dCnt = tiReadTriggerBlock(dma_dabufp);
 
-#ifdef TI_DATA_READOUT
-  BANKOPEN(4,BT_UI4,0);
-
-  dCnt = tiReadBlock(dma_dabufp,8+(8*BLOCKLEVEL),1);
   if(dCnt<=0)
     {
-      printf("No data or error.  dCnt = %d\n",dCnt);
+      printf("No TI Trigger data or error.  dCnt = %d\n",dCnt);
     }
   else
-    {
+    { /* TI Data is already in a bank structure.  Bump the pointer */
       dma_dabufp += dCnt;
     }
-  BANKCLOSE;
-#endif
 
 
   if (use_vetroc) {
 
-  /* Bank for VETROC data */
+    /* Bank for VETROC data */
 
-  BANKOPEN(3,BT_UI4,0);
+    BANKOPEN(3,BT_UI4,blockLevel);
+    vmeDmaConfig(A32DMA1);
 
 
-     /* Check for valid data in VETROCs */
+    /* Check for valid data in VETROCs */
 
     read_stat = 0;
 
@@ -543,44 +570,64 @@ rocTrigger(int evnum)
 
     } else {
       printf("ERROR (VETROC ROL): Data not ready in event %d\n at %s",tiGetIntCount(), c_time_string); /* CARLOS STUFF FOR DEBUGGING PURPOSES (time)*/
-        *dma_dabufp++ = LSWAP(0xda000bad);
+      *dma_dabufp++ = LSWAP(0xda000bad);
     }
-  BANKCLOSE;
+    BANKCLOSE;
   }
 
   /* v792 Readout */
   if (use792>0) {
-    BANKOPEN(6,BT_UI4,0);
+    unsigned int scanmask = 0, datascan = 0;
+    int iadc;
+
     vmeDmaConfig(A24DMA);
-    for (i=0;i<V792_NMOD;i++) {
-      wait=0;
-      do {
-        nevt = c792Dready(i);
-        wait++;
-      } while ((nevt <= 0)&&(wait<=100));
 
-      if (nevt>0) {
-        nwords = 0;
-        *dma_dabufp++=LSWAP(0xda40adc0+i);
+    BANKOPEN(6,BT_UI4,blockLevel);
+    /* Check if an Event is available */
+    scanmask = c792ScanMask();
+    datascan = c792GDReady(scanmask, 1000);
 
-        //nwords= c792ReadEventDebug(i,dma_dabufp+1);       /* write data to buffer, skipping a word */
-        nwords= c792ReadEvent(i,dma_dabufp+1);       /* write data to buffer, skipping a word */
-       /*  *dma_dabufp++=LSWAP(0xb0b0b000);*/
-	 *dma_dabufp++=LSWAP(nwords);                    /* fill in skipped word with data count */
-         dma_dabufp += nwords;
+    if(datascan==scanmask)
+      {
+	for(iadc = 0; iadc < V792_NMOD; iadc++)
+	  {
+	    dCnt = c792ReadBlock(iadc,dma_dabufp,MAX_ADC_DATA+40);
+	    if(dCnt <= 0)
+	      {
+		logMsg("%4d: ERROR: ADC %2d Read Failed - Status 0x%x\n",
+		       tiGetIntCount(),
+		       iadc, dCnt,0,0,0,0);
+		*dma_dabufp++ = LSWAP(iadc);
+		*dma_dabufp++ = LSWAP(0xda00bad1);
+		c792Clear(iadc);
+#ifdef TI_MASTER
+		tiSetBlockLimit(20);
+#endif
+	      }
+	    else
+	      {
+		dma_dabufp += dCnt;
+	      }
+	  }
 
-	/*        dma_dabufp+=nwords+1; */
+      }
+    else
+      {
+	logMsg("%4d: ERROR: datascan != scanmask for ADC  (0x%08x != 0x%08x)\n",
+	       tiGetIntCount(),
+	       datascan,scanmask,0,0,0,0);
+	*dma_dabufp++ = LSWAP(datascan);
+	*dma_dabufp++ = LSWAP(scanmask);
+	*dma_dabufp++ = LSWAP(0xda00bad2);
+#ifdef TI_MASTER
+	tiSetBlockLimit(20);
+#endif
 
-        //printf("nevt: %i, ADC: %i, nwords: %d, dma_dabufp: %d:  \n", nevt, i, nwords, dma_dabufp); /* DEBUG */
+	for(iadc = 0; iadc < V792_NMOD; iadc++)
+	  c792Clear(iadc);
+      }
 
-         } else {
-	      printf("ERROR (ADC ROL): Data not ready in event %d\n at %s",tiGetIntCount(), c_time_string ); /* CARLOS STUFF FOR DEBUGGING PURPOSES (time)*/
-              *dma_dabufp++=LSWAP(0xed01adc0+i);
-              printf("nevt: %i, ADC: %i, nwords: %d, dma_dabufp: %d:  \n", nevt, i, nwords, dma_dabufp); /* DEBUG */
-            }
-       }
     BANKCLOSE;
-    vmeDmaConfig(A32DMA1);
   }
 
   BANKOPEN(5,BT_UI4,0);
@@ -594,7 +641,8 @@ rocTrigger(int evnum)
   *dma_dabufp++ = LSWAP(busytime);
   *dma_dabufp++ = LSWAP(livetime);
 
-  if (use_scaler && pScaler) {
+#ifdef USE_SCALER
+  if (pScaler) {
 
      *dma_dabufp++ = LSWAP(0xb0b0b444);
      *dma_dabufp++ = LSWAP(vmeRead32(&pScaler->readCounter[8]));
@@ -602,9 +650,9 @@ rocTrigger(int evnum)
      *dma_dabufp++ = LSWAP(vmeRead32(&pScaler->readCounter[10]));
 
   }
-  BANKCLOSE;
+#endif
 
-  //  BLOCKCLOSE;
+  BANKCLOSE;
 
   tiSetOutputPort(0,0,0,0);
 
@@ -621,8 +669,14 @@ rocTrigger(int evnum)
 void
 rocCleanup()
 {
-  int islot=0;
-
-  printf("%s: Reset all FADCs\n",__FUNCTION__);
-
+#ifdef TI_MASTER
+  tiResetSlaveConfig();
+#endif
 }
+
+
+/*
+  Local Variables:
+  compile-command: "make -k -B grinch_list.so grinch_slave_list.so"
+  End:
+ */

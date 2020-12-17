@@ -1,22 +1,25 @@
 /*************************************************************************
  *
- *  ti_master_list.c - Library of routines for readout and buffering of
+ *  ti_list.c - Library of routines for readout and buffering of
  *                     events using a JLAB Trigger Interface V3 (TI) with
  *                     a Linux VME controller in CODA 3.0.
  *
- *                     This for a TI in Master Mode controlling multiple ROCs
  */
 
 /* Event Buffer definitions */
 #define MAX_EVENT_POOL     10
 #define MAX_EVENT_LENGTH   1024*64      /* Size in Bytes */
 
-/* Define TI Type (TI_MASTER or TI_SLAVE) */
-#define TI_MASTER
+/* TI_MASTER / TI_SLAVE defined in Makefile */
+
+#ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
-/* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
-#define TI_ADDR  0
+#else
+/* TS trigger source (e.g. fiber), POLL for available data */
+#define TI_READOUT TI_READOUT_TS_POLL
+#endif
+#define TI_ADDR  0 /* Auto initialize (search for TI by slot */
 
 /* Measured longest fiber length in system */
 #define FIBER_LATENCY_OFFSET 0x4A
@@ -60,7 +63,7 @@ rocDownload()
   /*****************
    *   TI SETUP
    *****************/
-
+#ifdef TI_MASTER
   /*
    * Set Trigger source
    *    For the TI-Master, valid sources:
@@ -92,6 +95,7 @@ rocDownload()
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
+#endif
 
   /* Init the SD library so we can get status info */
   stat = sdInit(0);
@@ -114,9 +118,11 @@ void
 rocPrestart()
 {
 
+#ifdef TI_MASTER
   /* Set number of events per block (broadcasted to all connected TI Slaves)*/
   tiSetBlockLevel(blockLevel);
   printf("rocPrestart: Block Level set to %d\n",blockLevel);
+#endif
 
   tiStatus(0);
 
@@ -151,6 +157,11 @@ rocGo()
   blockLevel = tiGetCurrentBlockLevel();
   printf("rocGo: Block Level set to %d\n",blockLevel);
 
+#ifdef TI_SLAVE
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+  tiUseBroadcastBufferLevel(1);
+#endif
+
   /* Enable/Set Block Level on modules, if needed, here */
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   printf("************************************************************\n");
@@ -159,6 +170,7 @@ rocGo()
   printf("************************************************************\n");
 #endif
 
+#ifdef TI_MASTER
   /* Example: How to start internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
@@ -172,6 +184,7 @@ rocGo()
   */
   tiSoftTrig(1,0xffff,700,0);
 #endif
+#endif
 
 
 }
@@ -183,6 +196,7 @@ void
 rocEnd()
 {
 
+#ifdef TI_MASTER
   /* Example: How to stop internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Disable random trigger */
@@ -190,6 +204,7 @@ rocEnd()
 #elif defined (INTFIXEDPULSER)
   /* Disable Fixed Rate trigger */
   tiSoftTrig(1,0,700,0);
+#endif
 #endif
 
   tiStatus(0);
@@ -238,14 +253,15 @@ rocTrigger(int arg)
 void
 rocCleanup()
 {
-
   printf("%s: Reset all Modules\n",__FUNCTION__);
-
+#ifdef TI_MASTER
+  tiResetSlaveConfig();
+#endif
 }
 
 
 /*
   Local Variables:
-  compile-command: "make -k -B ti_master_list.so"
+  compile-command: "make -k -B ti_list.so ti_slave_list.so"
   End:
  */

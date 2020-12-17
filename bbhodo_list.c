@@ -122,10 +122,11 @@ rocDownload()
 void
 rocPrestart()
 {
-
+#ifdef TI_MASTER
   /* Set number of events per block (broadcasted to all connected TI Slaves)*/
   tiSetBlockLevel(blockLevel);
   printf("rocPrestart: Block Level set to %d\n",blockLevel);
+#endif
 
   tiStatus(0);
 
