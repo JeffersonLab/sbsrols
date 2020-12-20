@@ -180,7 +180,7 @@ void ssp_mpd_setup()
   uint32_t sspFiberMaskToInit;
 
 
-  if(sspMpdConfigInit("/home/sbs-onl/infn-cfg/newConfigFile/ssp_config.cfg") == ERROR)
+  if(sspMpdConfigInit("/home/sbs-onl/bbgem-cfg/ssp_config.cfg") == ERROR)
     return;
   sspMpdConfigLoad();
 

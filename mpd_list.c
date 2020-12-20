@@ -148,7 +148,7 @@ rocDownload()
 
   /*Read config file and fill internal variables */
   rval =
-    mpdConfigInit("/home/sbs-onl/infn-cfg/newConfigFile/mpd_config.cfg");
+    mpdConfigInit("/home/sbs-onl/bbgem-cfg/mpd_config.cfg");
   first_mpd_address = (2 << 19);
   numberOfMPDsToScan = 19;
 
