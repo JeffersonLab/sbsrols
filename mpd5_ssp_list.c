@@ -20,7 +20,7 @@ unsigned int BLOCKLEVEL=1;
 //#define NO_MPD_TEST
 
 /* Define Interrupt source and address */
-#define TI_SLAVE
+#define TI_MASTER
 #ifdef TI_MASTER
 #define TI_READOUT TI_READOUT_EXT_POLL  /* Poll for available data, external triggers */
 #else
@@ -29,6 +29,14 @@ unsigned int BLOCKLEVEL=1;
 #define TI_ADDR    (21<<19)          /* GEO slot 20 */
 
 #define FIBER_LATENCY_OFFSET 0x10  /* measured longest fiber length */
+
+/*
+  enable triggers (random or fixed rate) from internal pulser
+ */
+#define INTRANDOMPULSER
+/* #define INTFIXEDPULSER */
+
+
 
 #include <unistd.h>
 #include <stdint.h>
@@ -63,55 +71,253 @@ extern volatile struct mpd_struct *MPDp[(MPD_MAX_BOARDS+1)]; /* pointers to MPD 
 
 // End of MPD definition
 
+/* Buffer to store daLogMsg's */
+int dalma_rval, dalma_tot;
 
-void sspPrintMPD_OB_STATUS(){
-  uint32_t data;
+#define DALMA_INIT {				\
+  dalma_tot = 0;				\
+  bufp = (char *) &(apvbuffer[0]);		\
+  dalma_rval = sprintf (bufp,"\n");					\
+  if(dalma_rval > 0) {bufp += dalma_rval; dalma_tot += dalma_rval;}}
+
+#define DALMA_MSG(x...)	{						\
+  dalma_rval = sprintf(bufp, x);					\
+  if(dalma_rval > 0) {bufp += dalma_rval; dalma_tot += dalma_rval;}}
+
+#define DALMA_LOG {				\
+    if(dalma_tot > 1)				\
+      daLogMsg("INFO",apvbuffer);}
+
+char *apvbuffer;
+char *errorbuffer;
+char *bufp;
+
+int
+sspMpdDalogStatus(int id, unsigned int fmask)
+{
+  MPD_regs *mr;
+  int ifiber=0;
+  extern volatile SSP_regs *pSSP[MAX_VME_SLOTS+1];
+  extern int sspID[MAX_VME_SLOTS+1];
+
+  mr = (MPD_regs *)malloc(32*sizeof(MPD_regs));
+  printf("fmask = 0x%08x\n", fmask);
+
+
+  if(id==0) id=sspID[0];
+  if((id<=0) || (id>21) || (pSSP[id]==NULL))
+    {
+      printf("%s: ERROR: SSP in slot %d not initialized\n",__FUNCTION__,id);
+      return ERROR;
+    }
+
+  for(ifiber=0; ifiber<32; ifiber++)
+    {
+      mr[ifiber].Ctrl   = vmeRead32(&pSSP[id]->MPD[ifiber].Ctrl);
+      mr[ifiber].Status = vmeRead32(&pSSP[id]->MPD[ifiber].Status);
+      mr[ifiber].EBCtrl = vmeRead32(&pSSP[id]->MPD[ifiber].EBCtrl);
+    }
+
+  DALMA_INIT;
+
+  DALMA_MSG("                               SSP - Slot %2d\n",id);
+  DALMA_MSG("                           MPD Settings and Status\n\n");
+  DALMA_MSG("     Channel   -------ERRORS------     Event\n");
+  DALMA_MSG("MPD    Up      HARD   FRAME   SOFT    Builder\n");
+  DALMA_MSG("--------------------------------------------------------------------------------\n");
+  DALMA_LOG;
+
+  for(ifiber=0; ifiber<32; ifiber++)
+    {
+      if( (ifiber % 16) == 0 )
+	{
+	  DALMA_INIT;
+	}
+
+      if( ((1 << ifiber) & fmask) == 0)
+	{
+	  if( (ifiber % 16) == 15 )
+	    {
+	      DALMA_LOG;
+	    }
+
+	  continue;
+	}
+
+      DALMA_MSG("%2d    ",ifiber);
+
+      DALMA_MSG("%s      ",(mr[ifiber].Status & MPD_STATUS_CHANNELUP)?" UP ":"DOWN");
+
+      DALMA_MSG("%s    ",(mr[ifiber].Status & MPD_STATUS_HARDERROR)?"ERR":"---");
+
+      DALMA_MSG("%s     ",(mr[ifiber].Status & MPD_STATUS_FRAMEERROR)?"ERR":"---");
+
+      if(mr[ifiber].Status & MPD_STATUS_SOFTERRORS)
+	{
+	  DALMA_MSG("%3d    ",(mr[ifiber].Status & MPD_STATUS_SOFTERRORS)>>8);
+	}
+      else
+	DALMA_MSG("---    ");
+
+      DALMA_MSG("%s\n",
+	    (mr[ifiber].EBCtrl & MPD_EBCTRL_ENABLE)?"ENABLED ":"DISABLED");
+
+
+      if( (ifiber % 16) == 15 )
+	{
+	  DALMA_LOG;
+	}
+    }
+
+  DALMA_LOG;
+
+  if(mr)
+    free(mr);
+
+  return OK;
+}
+
+int
+sspDalogEbStatus(int id)
+{
+  unsigned int blockcnt, wordcnt, eventcnt;
+  int i;
+  int result;
+
+  sspGetEbStatus(id, &blockcnt, &wordcnt, &eventcnt);
+
+  daLogMsg("INFO","\n SSP %2d : Block Count = %d, Word Count = %d, Event Count = %d\n",
+	   id, blockcnt, wordcnt, eventcnt);
+
+  return(0);
+}
+
+
+void sspPrintMPD_OB_STATUS(int dalogFlag){
+  struct output_buffer_struct r;
   int k;
+  int rval = 0;
+
+  DALMA_INIT;
+
+  DALMA_MSG("                              Output Buffer Status\n");
+  DALMA_MSG("           Event Builder\n");
+  DALMA_MSG("         OutFIFO   Full Flags       \n");
+  DALMA_MSG("Slot   nWrds  F E    O E C T   Blks    Events     Trigs    Missed  Incoming\n");
+  DALMA_MSG("--------------------------------------------------------------------------------\n");
+
   for (k=0;k<fnMPD;k++) { // only active mpd set
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.evb_fifo_word_count);
-    printf ("ob_status.evb_fifo_word_count: %08x \n", data);
+    r.evb_fifo_word_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.evb_fifo_word_count);
+    r.block_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.block_count);
+    r.event_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.event_count);
+    r.trigger_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.trigger_count);
+    r.missed_trigger = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.missed_trigger);
+    r.incoming_trigger = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.incoming_trigger);
 
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.event_count);
-    printf ("ob_status.event_count: %08x \n", data);
+    DALMA_MSG(" %2d     ", mpdSlot(k));
 
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.block_count);
-    printf ("ob_status.block_count: %08x \n", data);
+    DALMA_MSG("%4d  ",
+		    r.evb_fifo_word_count & 0xFFFF);
 
+    DALMA_MSG("%d %d    ",
+		    (r.evb_fifo_word_count & (1<<17) ? 1 : 0),
+		    (r.evb_fifo_word_count & (1<<16) ? 1 : 0));
 
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.trigger_count);
-    printf ("ob_status.trigger_count: %08x \n", data);
+    DALMA_MSG("%d %d %d %d    ",
+		    (r.evb_fifo_word_count & (1<<27) ? 1 : 0),
+		    (r.evb_fifo_word_count & (1<<26) ? 1 : 0),
+		    (r.evb_fifo_word_count & (1<<25) ? 1 : 0),
+		    (r.evb_fifo_word_count & (1<<24) ? 1 : 0));
 
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.missed_trigger);
-    printf ("ob_status.missed_trigger: %08x \n", data);
+    DALMA_MSG("%3d  ",
+		    r.block_count & 0xFF);
 
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.incoming_trigger);
-    printf ("ob_status.incoming_trigger: %08x \n", data);
+    DALMA_MSG("%8d  ",
+		    r.event_count & 0xFFFFFF);
 
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.sdram_flag_wc);
-    printf ("ob_status.sdram_flag_wc: %08x \n", data);
+    DALMA_MSG("%8d  ",
+		    r.trigger_count);
 
-    data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.output_buffer_flag_wc);
-    printf ("ob_status.output_buffer_flag_wc: %08x \n", data);
-    if( data & 0x20000000 )	// Evt_Fifo_Full
-      printf ("MPD %d FIFO full\n", mpdSlot(k));
+    DALMA_MSG("%8d  ",
+		    r.missed_trigger);
 
-    printf("\n");
+    DALMA_MSG("%8d",
+		    r.incoming_trigger);
 
-    //	data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.output_buffer_rd_addr);
-    //	printf ("ob_status.output_buffer_rd_addr: %08x \n", data);
-
-    //	data = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.output_buffer_wr_addr);
-    //printf ("ob_status.output_buffer_wr_addr: %08x \n", data);
+    DALMA_MSG("\n");
 
   }
+
+  if(dalogFlag)
+    {
+      DALMA_LOG;
+    }
+  else
+    {
+      printf("%s",apvbuffer);
+      printf("\n");
+    }
+
+
+  DALMA_INIT;
+
+  DALMA_MSG("       ---------------------- SDRAM --------------------   -- OBUF -    Latched\n");
+  DALMA_MSG("                  FIFO Addr                        Word         Word   APV  PROC\n");
+  DALMA_MSG("Slot          WR OK         RD OK     Overrun      Count   F E Count  Full  Full\n");
+  DALMA_MSG("--------------------------------------------------------------------------------\n");
+
+  for (k=0;k<fnMPD;k++) { // only active mpd set
+
+    r.sdram_flag_wc = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.sdram_flag_wc);
+    r.output_buffer_flag_wc = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.output_buffer_flag_wc);
+
+    DALMA_MSG(" %2d    ", mpdSlot(k));
+
+    DALMA_MSG("0x%7x  %d  ",
+		    r.sdram_fifo_wr_addr & 0x1FFFFFF,
+		    (r.sdram_fifo_wr_addr & (1<<31)) ? 1 : 0
+		    );
+
+    DALMA_MSG("0x%7x  %d         ",
+		    r.sdram_fifo_rd_addr & 0x1FFFFFF,
+		    (r.sdram_fifo_rd_addr & (1<<31)) ? 1 : 0
+		    );
+
+    DALMA_MSG("%s  ",
+		    (r.sdram_flag_wc & (1<<31)) ? "YES" : " no"
+		    );
+
+    DALMA_MSG("0x%7x   ",
+		    r.sdram_flag_wc & 0x1FFFFFF
+		    );
+
+    DALMA_MSG("%d %d  %4d  ",
+		    (r.output_buffer_flag_wc & (1<<31) ) ? 1 : 0,
+		    (r.output_buffer_flag_wc & (1<<30) ) ? 1 : 0,
+		    r.output_buffer_flag_wc & 0x1FFF
+		    );
+
+    DALMA_MSG("0x%8x",
+		    r.latched_full
+		    );
+
+    DALMA_MSG("\n");
+  }
+
+  if(dalogFlag)
+    {
+      DALMA_LOG;
+    }
+  else
+    {
+      printf("%s",apvbuffer);
+      printf("\n");
+    }
 }
 
 
 void sspPrintBlock(unsigned int *pBuf, int dCnt){
-  int val, pos = 0;
-#ifdef SKIP_TAG5
-  int tag;
-#endif
+  int dd, tag, val, pos = 0;
 
   int d[6], apv, ch;
   int total = dCnt;
@@ -124,16 +330,13 @@ void sspPrintBlock(unsigned int *pBuf, int dCnt){
 
       if(val & 0x80000000)
 	{
-#ifdef SKIP_TAG5
+	  dd = 1;
 	  tag = (val>>27) & 0xf;
-#endif
 	  pos = 0;
 	}
 
-#ifdef SKIP_TAG5
-      if(tag != 5)
-      	continue;
-#endif
+      // if(tag != 5)
+      //	continue;
 
       if(pos==0)
 	printf("MPD Rotary = %d, SSP Fiber = %d\n", (val>>0)&0x1f, (val>>16)&0x1f);
@@ -181,12 +384,16 @@ void ssp_mpd_setup()
 
 
   if(sspMpdConfigInit("/home/sbs-onl/bbgem-cfg/ssp_config.cfg") == ERROR)
-    return;
+    {
+      daLogMsg("ERROR","Error in configuration file");
+      return;
+    }
+
   sspMpdConfigLoad();
 
   iFlag = SSP_INIT_SKIP_FIRMWARE_CHECK | SSP_INIT_MODE_VXS | 0xFFFF0000;
 
-  sspInit(20<<19,1<<19,1,iFlag);
+  sspInit(6<<19,1<<19,1,iFlag);
 
   sspMpdFiberReset(0);
   sspMpdFiberLinkReset(0,0xffffffff);
@@ -285,13 +492,17 @@ void ssp_mpd_setup()
   /*****************
    *   MPD SETUP
    *****************/
-  mpdSetPrintDebug(0x1);
+  int rval = OK;
+  unsigned int errSlotMask = 0;
+
+  mpdSetPrintDebug(0);
 
   // discover MPDs and initialize memory mapping
 
   // In SSP mode, par1(fiber mask) and par3(number of mpds) are not used in mpdInit(par1, par2, par3, par4)
   // Instead, they come from the configuration file
-  mpdInit(0x0, 0, 0, MPD_INIT_SSP_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK);
+  mpdInit(0, 0, 0,
+	  MPD_INIT_SSP_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK);
   fnMPD = mpdGetNumberMPD();
 
 
@@ -332,6 +543,7 @@ void ssp_mpd_setup()
     if( try_cnt == 3 )
       {
 	printf("APV blind scan failed for %d TIMES !!!!\n\n", try_cnt);
+	errSlotMask |= (1 << i);
       }
 
     printf(" - APV Reset\n");
@@ -340,6 +552,7 @@ void ssp_mpd_setup()
       {
 	printf(" * * FAILED\n");
 	error_status = ERROR;
+	errSlotMask |= (1 << i);
       }
 
     usleep(10);
@@ -410,6 +623,8 @@ void ssp_mpd_setup()
 
     error_status |= saveError;
 
+    if(error_status == ERROR)
+      errSlotMask |= (1 << i);
 
     // configure adc on MPD
     printf("Configure ADC on MPD slot %d\n",i);
@@ -427,8 +642,81 @@ void ssp_mpd_setup()
   } // end loop on mpds
   //END of MPD configure
 
+  // summary report
+  bufp = (char *) &(apvbuffer[0]);
+
+  rval = sprintf(bufp, "\n");
+  if(rval > 0)
+    bufp += rval;
+  rval = sprintf(bufp, "Configured APVs (ADC 15 ... 0)\n");
+  if(rval > 0)
+    bufp += rval;
+
   int ibit;
   int impd, id, iapv;
+  for (impd = 0; impd < fnMPD; impd++)
+    {
+      id = mpdSlot(impd);
+
+      if (mpdGetApvEnableMask(id) != 0)
+	{
+	  rval = sprintf(bufp, "  MPD %2d : ", id);
+	  if(rval > 0)
+	    bufp += rval;
+	  iapv = 0;
+	  for (ibit = 15; ibit >= 0; ibit--)
+	    {
+	      if (((ibit + 1) % 4) == 0)
+		{
+		  rval = sprintf(bufp, " ");
+		  if(rval > 0)
+		    bufp += rval;
+		}
+	      if (mpdGetApvEnableMask(id) & (1 << ibit))
+		{
+		  rval = sprintf(bufp, "1");
+		  if(rval > 0)
+		    bufp += rval;
+		  iapv++;
+		}
+	      else
+		{
+		  rval = sprintf(bufp, ".");
+		  if(rval > 0)
+		    bufp += rval;
+		}
+	    }
+	  rval = sprintf(bufp, " (#APV %d)", iapv);
+	  if(rval > 0)
+	    bufp += rval;
+	  if(errSlotMask & (1 << id))
+	    {
+	      rval = sprintf(bufp, " INIT ERRORS\n");
+	      if(rval > 0)
+		bufp += rval;
+	    }
+	  else
+	    {
+	      rval = sprintf(bufp, "\n");
+	      if(rval > 0)
+		bufp += rval;
+	    }
+	}
+      else
+	{
+	  rval = sprintf(bufp,
+			 "  MPD %2d :                                INIT ERRORS\n", id);
+	  if(rval > 0)
+	    bufp += rval;
+	}
+    }
+  rval = sprintf(bufp, "\n");
+  if(rval > 0)
+    bufp += rval;
+
+  printf("%s",apvbuffer);
+
+#ifdef OLDOUTPUT
   for (impd = 0; impd < fnMPD; impd++)
     {
       id = mpdSlot(impd);
@@ -454,6 +742,8 @@ void ssp_mpd_setup()
 	  printf(" (#APV %d)\n", iapv);
 	}
     }
+#endif
+
   if (error_status != OK)
     daLogMsg("ERROR", "MPD initialization has errors");
 }
@@ -466,14 +756,19 @@ rocDownload()
 {
   printf("%s: Build date/time %s/%s\n", __func__, __DATE__, __TIME__);
 
+  apvbuffer = (char *)malloc(1024*50*sizeof(char));
+  errorbuffer = (char *)malloc(1024*50*sizeof(char));
+
   /*****************
    *   TI SETUP
    *****************/
 #ifdef TI_MASTER
-  tiSetTriggerSourceMask(TI_TRIGSRC_TSINPUTS | TI_TRIGSRC_PULSER |
-			 TI_TRIGSRC_LOOPBACK | TI_TRIGSRC_VME);
-  //  tiSetTriggerSource(TI_TRIGGER_TSINPUTS);
-  //tiSetTriggerSource(TI_TRIGGER_RANDOM);
+
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
+#else
+  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+#endif
 
   /* Set needed TS input bits */
   tiEnableTSInput( TI_TSINPUT_1 );
@@ -492,23 +787,13 @@ rocDownload()
   tiSetTriggerHoldoff(4,20,1);  /* 4 trigger in 20*3840ns window */
   // tiSetTriggerHoldoff(4,1,1);  /* 4 trigger in 20*3840ns window */
 
-  /*   /\* Set the sync delay width to 0x40*32 = 2.048us *\/ */
-  tiSetSyncDelayWidth(0x54, 0x40, 1);
-
   /* Set number of events per block */
   tiSetBlockLevel(BLOCKLEVEL);
-
-  tiSetEventFormat(1);
 
   tiSetBlockBufferLevel(BUFFERLEVEL);
 #endif /* TI_MASTER */
 
   tiSetTriggerPulse(1,0,25,0);
-
-  /* Set the busy source to non-default value (no Switch Slot B busy) */
-  tiSetBusySource(TI_BUSY_LOOPBACK,1);
-
-  /*   tiSetFiberDelay(10,0xcf); */
 
   tiSetOutputPort(1,1,0,0);
 
@@ -547,6 +832,12 @@ rocGo()
   int UseSdram, FastReadout;
   tiSetOutputPort(0,1,0,0);
 
+  /* Print out the Run Number and Run Type (config id) */
+  printf("rocGo: Activating Run Number %d, Config id = %d\n",
+	 rol->runNumber,rol->runType);
+
+  /* Enable modules, if needed, here */
+  daLogMsg("INFO", apvbuffer);
 
 
   /* Enable modules, if needed, here */
@@ -579,10 +870,34 @@ rocGo()
 	 __FUNCTION__,BLOCKLEVEL);
   //sspSoftReset(0);
   sspMpdPrintStatus(0);
+
+  sspMpdDalogStatus(0, mpdGetSSPFiberMask(sspSlot(0)));
   /* Use this info to change block level is all modules */
 
   tiSetBlockLimit(0); // 0: disables block limit
   tiStatus(0);
+
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  printf("************************************************************\n");
+  printf("%s: TI Configured for Internal Pulser Triggers\n",
+	 __func__);
+  printf("************************************************************\n");
+#endif
+
+  /* Example: How to start internal pulser trigger */
+#ifdef INTRANDOMPULSER
+  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
+  tiSetRandomTrigger(1,0x7);
+#elif defined (INTFIXEDPULSER)
+  /*
+    Enable fixed rate with period (ns)
+    120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
+     - arg2 = 0xffff - Continuous
+     - arg2 < 0xffff = arg2 times
+  */
+  tiSoftTrig(1,0xffff,700,0);
+#endif
+
 }
 
 /****************************************
@@ -591,6 +906,15 @@ rocGo()
 void
 rocEnd()
 {
+#ifdef INTRANDOMPULSER
+  /* Disable random trigger */
+  tiDisableRandomTrigger();
+#elif defined (INTFIXEDPULSER)
+  /* Disable Fixed Rate trigger */
+  tiSoftTrig(1,0,700,0);
+#endif
+
+
   tiSetOutputPort(1,1,0,0);
   tiStatus(0);
 
@@ -693,7 +1017,7 @@ rocTrigger(int arg)
   int i;
   for(i=0;i<12;i++)
     {
-      if( (1 << i) & mpdGetSSPFiberMask(0) )
+      if( (1 << i) & mpdGetSSPFiberMask(sspSlot(0)) )
 	{
 	  count = sspMpdGetSoftErrorCount(0,i);
 	  if(last_soft_err_cnt[i] < 0)
@@ -708,6 +1032,7 @@ rocTrigger(int arg)
 
   if(do_soft_err)
     {
+      daLogMsg("ERROR","SSP Soft Error");
       printf("*** SSP SOFT ERROR ***\n");
 
       //  printf("*** Dumping ssp mpd monitor sspMpdMonDump()\n");
@@ -715,8 +1040,8 @@ rocTrigger(int arg)
       //  printf("*** sspMpdMonDump() ends\n");
 
       printf("*** Status of MPD and SSP before reset ***\n");
-      sspPrintMPD_OB_STATUS();
-      sspMpdPrintStatus(0);
+      sspPrintMPD_OB_STATUS(1);
+      sspMpdDalogStatus(0, mpdGetSSPFiberMask(sspSlot(0)));
       mpdGStatus(1);
       sspPrintEbStatus(0);
 
@@ -727,14 +1052,15 @@ rocTrigger(int arg)
   if (ssp_timeout == ssp_timeout_max )
     {
       printf("*** SSP TIMEOUT ***\n ");
+      daLogMsg("ERROR","SSP Timeout");
 
 
       // sspMpdFiberReset(0);
       //sspSoftReset(0);
 
       printf("*** Status of MPD and SSP before reset ***\n");
-      sspPrintMPD_OB_STATUS();
-      sspMpdPrintStatus(0);
+      sspPrintMPD_OB_STATUS(1);
+      sspMpdDalogStatus(0, mpdGetSSPFiberMask(sspSlot(0)));
       mpdGStatus(1);
       sspPrintEbStatus(0);
       //      printf("*** Dumping ssp mpd monitor sspMpdMonDump()\n");
@@ -756,8 +1082,8 @@ rocTrigger(int arg)
       //      sspPrintBlock(pBuf, dCnt);
       printf("*** Press Enter to start reset procedure***\n");
       getchar();
-      sspMpdFiberReset(0);
       /*
+      sspMpdFiberReset(0);
       //tiSetBlockLimit(1);
 
       printf("*** Invoking sspMpdFiberReset()***\n");
@@ -862,6 +1188,7 @@ rocTrigger(int arg)
 
       if(dCnt<=0)
 	{
+	  daLogMsg("ERROR","SSP : No data or error");
 	  printf("No data or error.  dCnt = %d\n",dCnt);
 	  // tiSetBlockLimit(1); ---danning comment for the following try on resetting mpd
 	  //---------trying to reset mpd ---danning
@@ -952,7 +1279,11 @@ rocTrigger(int arg)
 void
 rocCleanup()
 {
+  if(apvbuffer)
+    free(apvbuffer);
 
+  if(errorbuffer)
+    free(errorbuffer);
 }
 
 void

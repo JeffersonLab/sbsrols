@@ -38,7 +38,7 @@ CC			= gcc
 AR                      = ar
 RANLIB                  = ranlib
 ifdef DEBUG
-CFLAGS			= -Wall -g
+CFLAGS			= -Wall -Wno-unused -g
 else
 CFLAGS			= -O3
 endif
@@ -56,7 +56,7 @@ CODA_LIBDIRS            = -L.
 CODA_LIBS		=
 CODA_DEFS		= -DLINUX -DDAYTIME=\""`date`"\"
 ifdef DEBUG
-CODA_CFLAGS		= -Wall -g
+CODA_CFLAGS		= -Wall -Wno-unused -g
 else
 CODA_CFLAGS		= -O
 endif
