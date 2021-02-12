@@ -16,7 +16,7 @@
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
 /* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
-#define TI_ADDR  0
+#define TI_ADDR  0x80000
 
 /* Measured longest fiber length in system */
 #define FIBER_LATENCY_OFFSET 0x4A
@@ -27,13 +27,13 @@
 
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
-#define BUFFERLEVEL 10
+#define BUFFERLEVEL 1
 
 /*
   enable triggers (random or fixed rate) from internal pulser
  */
-/* #define INTRANDOMPULSER */
-#define INTFIXEDPULSER
+#define INTRANDOMPULSER
+/* #define INTFIXEDPULSER */
 
 /****************************************
  *  DOWNLOAD

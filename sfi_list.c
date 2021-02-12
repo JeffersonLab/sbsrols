@@ -7,6 +7,12 @@
  *             with the SFI/Fastbus stuff added.
  *
  *   4dec2020: updated to CODA 3
+ *
+ *  Build with Makefile:
+ *     make                      # Build Both Master and Slave rols
+ *     make sfi_list.so          # Master only
+ *     make sfi_slave_list.so    # Slave only
+ *
  */
 
 /* Event Buffer definitions */
@@ -14,10 +20,22 @@
 #define MAX_EVENT_LENGTH  6500  /* Size in Bytes; assumes 10 ADCs + 10 TDCs */
 #define DS_TIMEOUT          50   /* how long to wait for datascan */
 
-/* Define TI Type (TI_MASTER or TI_SLAVE) */
+/* TI Type (TI_MASTER or TI_SLAVE)
+   Should be defined by Makefile.  Otherwise: TI_MASTER */
+#if (!defined(TI_MASTER) & !defined(TI_SLAVE))
+#warning "TI_MASTER defined"
 #define TI_MASTER
+#endif
+
+#ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
+#else
+/* TS trigger source (e.g. fiber), POLL for available data */
+#define TI_READOUT TI_READOUT_TS_POLL
+#endif
+
+
 /* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
 #define TI_ADDR 0x80000
 
@@ -25,20 +43,20 @@
 #define FIBER_LATENCY_OFFSET 0x4A
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
-#include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
-#include "sdLib.h"
+#define USE_SLAVE_WINDOW
+#include "tiprimary_list-test.c" /* Source required for CODA readout lists using the TI */
 
 int readout_ti=0;
 int readout_fastbus=1;
 int trig_mode=1;
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
-#define BUFFERLEVEL 10
+#define BUFFERLEVEL 1
 
 /* Define the Bank of uint32 containing all inserted data from readout event */
 #define FB_BANK 1
 
-int branch_num=1;
+int branch_num=0; // BM: 12feb2021
 
 /* pick multiblock(1) or not(0).  If not, then use defaultAdcCsr0 */
 static int use_multiblock=1;
@@ -47,12 +65,6 @@ unsigned int defaultAdcCsr0=0x00000104;
 /* Back plane gate: 8B.  Front panel: 81    */
 unsigned int defaultAdcCsr1=0x0000008B;
 
-/* Need to load the fb_diag_cl.o library for these functions */
-extern int isAdc1881(int slot);
-extern int isTdc1877(int slot);
-extern int isTdc1875(int slot);
-extern int fb_map();
-
 int topAdc=0;
 int bottomAdc=0;
 int topTdc=0;
@@ -60,8 +72,6 @@ int bottomTdc=0;
 
 #define MAXSLOTS 26
 
-//#include "SFI_source.h"
-//#include "sfi_fb_macros.h"
 #include "libsfifb.h"
 
 #include "usrstrutils.c"
@@ -73,6 +83,12 @@ int tdcslots[MAXSLOTS];
 /* caution: nmodules is used by threshold.c and nmodule=nadc there */
 int nadc=0;
 int ntdc=0;
+
+/*
+  enable triggers (random or fixed rate) from internal pulser
+ */
+/* #define INTRANDOMPULSER */
+/* #define INTFIXEDPULSER */
 
 /* function prototype */
 void rocTrigger(int arg);
@@ -96,6 +112,7 @@ rocDownload()
    *****************/
 
   tiDisableBusError();
+#ifdef TI_MASTER
   /*
    * Set Trigger source
    *    For the TI-Master, valid sources:
@@ -127,8 +144,10 @@ rocDownload()
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
+#endif
 
-  tiStatus(0);
+  tiSetFPInputReadout(1);
+  tiStatus(1);
 
   /***************************
    *   SFI and FASTBUS SETUP
@@ -143,23 +162,13 @@ rocDownload()
   }
 #endif
   sfi_addr=0xe00000;
-#ifdef VXWORKS
-  res = (unsigned int) sysBusToLocalAdrs(0x39,sfi_addr ,&laddr);
-#endif
-#ifdef LINUX
-  res = (unsigned int) vmeBusToLocalAdrs(0x39,(char *)(unsigned long)sfi_addr ,(char **)&laddr);
-#endif
-  if (res != 0) {
-    printf("Error Initializing SFI res=%d \n",res);
-  } else {
-    printf("Calling InitSFI() routine with laddr=0x%lx.\n",laddr);
-    InitSFI(laddr);
-  }
 
+  InitSFI(sfi_addr);
   InitFastbus(0x20,0x33);
 
 
   printf("Map of Fastbus Modules \n");
+
   fb_map();
 
   /*   load_cratemap(); */
@@ -227,9 +236,11 @@ rocPrestart()
   unsigned int pedsuppress, csrvalue;
   int kk, padr, sadr;
 
+#ifdef TI_MASTER
   /* Set number of events per block (broadcasted to all connected TI Slaves)*/
   tiSetBlockLevel(blockLevel);
   printf("rocPrestart: Block Level set to %d\n",blockLevel);
+#endif
 
   tiStatus(0);
 
@@ -318,10 +329,15 @@ rocGo()
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
 
-  /* Get the current Block Level */
+  /* Get the broadcasted Block and Buffer Levels from TS or TI Master */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("rocGo: Block Level set to %d\n",blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("rocGo: Block Level set to %d  Buffer Level set to %d\n",blockLevel,bufferLevel);
 
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+  tiUseBroadcastBufferLevel(1);
+
+#ifdef TI_MASTER
   /* Enable/Set Block Level on modules, if needed, here */
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   printf("************************************************************\n");
@@ -343,6 +359,7 @@ rocGo()
   */
   tiSoftTrig(1,0xffff,700,0);
 #endif
+#endif
 
   printf("rocGo: User Go Executed\n");
 }
@@ -353,6 +370,7 @@ rocGo()
 void
 rocEnd()
 {
+#ifdef TI_MASTER
   /* Example: How to stop internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Disable random trigger */
@@ -360,6 +378,7 @@ rocEnd()
 #elif defined (INTFIXEDPULSER)
   /* Disable Fixed Rate trigger */
   tiSoftTrig(1,0,700,0);
+#endif
 #endif
 
   tiStatus(0);
@@ -388,7 +407,7 @@ rocTrigger(int arg)
 #ifdef LINUX
   unsigned long dmaptr;
   static unsigned int *pfbdata;
-  unsigned int rb;
+  unsigned int rb = 0;
   pfbdata = (unsigned int *)dma_dabufp;
 #endif
 
@@ -469,7 +488,8 @@ rocTrigger(int arg)
 	dmaptr = vmeDmaLocalToVmeAdrs((unsigned long)dma_dabufp);
 	res = fb_frdb_1(topAdc,0,(unsigned int *)dmaptr,lenb,&rb,1,0,1,0,0x0a,0,0,1);
 	rlen = rb>>2;
-	if(ldebug) logMsg("multiblock Adc rlen %d  %d  %d   dma_dabufp 0x%x \n",rb,rlen,res,dma_dabufp);
+	if(ldebug) logMsg("multiblock Adc rb=%d  rlen=%d  res=%d  dmaptr=0x%x\n",
+			  rb, rlen, res, dmaptr);
 	if(res == 0) dma_dabufp += rlen;
       } else {  /* read ADCs from each slot, the old slow way */
 	for (islot=bottomAdc; islot<=topAdc; islot++) {
@@ -499,10 +519,12 @@ rocTrigger(int arg)
 #endif
 #ifdef LINUX
       if (use_multiblock) {
+	dmaptr = vmeDmaLocalToVmeAdrs((unsigned long)dma_dabufp);
 	res = fb_frdb_1(topTdc,0,(unsigned int *)dmaptr,lenb,&rb,1,1,1,0,0x0a,1,1,1);
       } else { /* read TDCs from each slot, the old slow way */
 	for (islot=bottomTdc; islot<=topTdc; islot++) {
 	  if(ldebug) logMsg("Tdc read loop, islot %d \n",islot);
+	  dmaptr = vmeDmaLocalToVmeAdrs((unsigned long)dma_dabufp);
 	  res = fb_frdb_1(islot,0,(unsigned int *)dmaptr,lenb,&rb,1,0,1,0,0x0a,0,0,1);
 	  rlen = rb>>2;
 	  if(ldebug) logMsg("Tdc rlen %d  %d \n",rb,rlen);
@@ -548,4 +570,13 @@ void
 rocCleanup()
 {
   printf("%s: Reset all Modules\n",__FUNCTION__);
+#ifdef TI_MASTER
+  tiResetSlaveConfig();
+#endif
 }
+
+/*
+  Local Variables:
+  compile-command: "make -k -B sfi_list.so sfi_slave_list.so"
+  End:
+ */

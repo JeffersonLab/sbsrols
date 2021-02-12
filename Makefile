@@ -18,9 +18,9 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= ti_master_list.so ti_slave_list.so sfi_list.so
+VMEROL			= ti_master_list.so ti_slave_list.so sfi_list.so bbshower_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -lsfifb
+ROLLIBS			= -lsfifb -lfadc -lts -lsd
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -38,7 +38,7 @@ CC			= gcc
 AR                      = ar
 RANLIB                  = ranlib
 ifdef DEBUG
-CFLAGS			= -Wall -g
+CFLAGS			= -Wall -Wno-unused -g
 else
 CFLAGS			= -O3
 endif
@@ -56,7 +56,7 @@ CODA_LIBDIRS            = -L.
 CODA_LIBS		=
 CODA_DEFS		= -DLINUX -DDAYTIME=\""`date`"\"
 ifdef DEBUG
-CODA_CFLAGS		= -Wall -g
+CODA_CFLAGS		= -Wall -Wno-unused -g
 else
 CODA_CFLAGS		= -O
 endif
@@ -88,11 +88,19 @@ test_list_v3.so: test_list_v3.c
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
-blah_slave_list.so: mpd_list.c
+bbshower_slave_list.so: bbshower_list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
-blah_list.so: mpd_list.c
+bbshower_list.so: bbshower_list.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+sfi_slave_list.so: sfi_list.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+sfi_list.so: sfi_list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
