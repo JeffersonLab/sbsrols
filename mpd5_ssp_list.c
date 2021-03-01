@@ -11,7 +11,7 @@
 /* Event Buffer definitions */
 /* Default block level */
 unsigned int BLOCKLEVEL=1;
-#define BUFFERLEVEL 1
+#define BUFFERLEVEL 5
 #define MAX_EVENT_LENGTH   32768*12*BLOCKLEVEL      /* Size in Bytes */
 #define SSP_MAX_EVENT_LENGTH 32000*12*BLOCKLEVEL     //SSP block length
 #define MAX_EVENT_POOL     50
@@ -33,8 +33,8 @@ unsigned int BLOCKLEVEL=1;
 /*
   enable triggers (random or fixed rate) from internal pulser
  */
-#define INTRANDOMPULSER
-/* #define INTFIXEDPULSER */
+//#define INTRANDOMPULSER
+//#define INTFIXEDPULSER
 
 
 
@@ -335,8 +335,8 @@ void sspPrintBlock(unsigned int *pBuf, int dCnt){
 	  pos = 0;
 	}
 
-      // if(tag != 5)
-      //	continue;
+      if(tag != 5)
+      	continue;
 
       if(pos==0)
 	printf("MPD Rotary = %d, SSP Fiber = %d\n", (val>>0)&0x1f, (val>>16)&0x1f);
@@ -434,54 +434,88 @@ void ssp_mpd_setup()
       sspSetBlockLevel(sspSlot(issp),BLOCKLEVEL);
 
       //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
-      int mpdSlot, apvId, cModeMin, cModeMax;
+      int sspSlotID, mpdSlot, apvId, cModeMin, cModeMax;
       int fiberID = -1, last_mpdSlot = -1;
       FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange.txt","r");
-      FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal.txt","r");
-      if(fcommon==NULL){
-	printf("no commonMode file\n");
-      }else{
-	printf("trying to read commonMode\n");
-	while(fscanf(fcommon, "%d %d %d %d", &mpdSlot, &apvId, &cModeMin, &cModeMax)==4){
-	  if(mpdSlot!=last_mpdSlot){
-	    last_mpdSlot = mpdSlot;
-	    fiberID++;
-	  }
-	  //printf("fiberID %d %d %d %d \n", fiberID, apvId, cModeMin, cModeMax);
-	  cModeMin = 200;
-	  cModeMax = 800;
-	  sspMpdSetAvg(0, fiberID, apvId, cModeMin, cModeMax);
-	}
-	fclose(fcommon);
-      }
+      //FILE *fcommon   = NULL;
+
+      //valid pedestal file => will load APV offset file and subtract from APV samples
+      //NULL => will load 0's for all APV offsets
+      //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal.txt","r");
+      //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal_test.txt","r");    //Test file with offset set to -1000 in fiber 15, apv 11, channel 10
+      FILE *fpedestal = NULL;
+
+      // Load pedestal & threshold file settings
       int stripNo;
       float ped_offset, ped_rms;
+      char buf[10];
+      int i1, i2, i3, n;
+      char *line_ptr = NULL;
+      size_t line_len;
       fiberID = -1, last_mpdSlot = -1;
       if(fpedestal==NULL){
+	for(fiberID=0; fiberID<16; fiberID++)
+        {
+          for(apvId=0; apvId<15; apvId++)
+          {
+            for(stripNo=0; stripNo<128; stripNo++)
+            {
+              sspMpdSetApvOffset(sspSlot(issp), fiberID, apvId, stripNo, 0);
+	      sspMpdSetApvThreshold(sspSlot(issp), fiberID, apvId, stripNo, 0);
+            }
+          }
+        }
 	printf("no pedestal file\n");
       }else{
 	printf("trying to read pedestal \n");
 
-	while(fscanf(fpedestal, "%d %d %d %f %f", &mpdSlot, &apvId, &stripNo,
-		     &ped_offset, &ped_rms)==5 ){
-	  if(mpdSlot!=last_mpdSlot){
-	    last_mpdSlot = mpdSlot;
-	    fiberID++;
-	  }
-	  //printf("fiberID %d %d %d %f %f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
-	  ped_offset = 0;
-	  ped_rms = 10;
-	  sspMpdSetApvOffset(0, fiberID, apvId, stripNo, (int)ped_offset);
-	  sspMpdSetApvThreshold(0, fiberID, apvId, stripNo, 5*(int)ped_rms);
+	while(!feof(fpedestal))
+	{
+	  getline(&line_ptr, &line_len, fpedestal);
+
+          n = sscanf(line_ptr, "%10s %d %d %d", buf, &i1, &i2, &i3);
+          if( (n == 4) && !strcmp("APV", buf))
+          {
+            sspSlotID = i1;
+            fiberID = i2;
+            apvId = i3;
+            continue;
+          }
+
+          n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
+          if( (n == 3) && (sspSlot(issp) == sspSlotID) )
+          {
+//            printf("sspSlot: %2d, fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", sspSlotID, fiberID, apvId, stripNo, ped_offset, ped_rms);
+            sspMpdSetApvOffset(sspSlot(issp), fiberID, apvId, stripNo, (int)ped_offset);
+	    sspMpdSetApvThreshold(sspSlot(issp), fiberID, apvId, stripNo, 5*(int)ped_rms);
+          }
 	}
 	fclose(fpedestal);
       }
 
+      // Load common-mode file settings
+      if(fcommon==NULL){
+	printf("no commonMode file\n");
+      }else{
+	printf("trying to read commonMode\n");
+	while(fscanf(fcommon, "%d %d %d %d", &fiberID, &apvId, &cModeMin, &cModeMax)==4){
+	  printf("fiberID %d %d %d %d \n", fiberID, apvId, cModeMin, cModeMax);
+
+//	  cModeMin = 200;
+//	  cModeMax = 800;
+//	  cModeMin = 0;
+//	  cModeMax = 4095;
+	  sspMpdSetAvg(0, fiberID, apvId, cModeMin, cModeMax);
+	}
+	fclose(fcommon);
+      }
 
 
     }
   sspSoftReset(0);
-  sspPrintMigStatus(0);
+  sspMigReset(0,1);
+  sspMigReset(0,0);
+//  sspPrintMigStatus(0);
 
   sspGStatus(0);
   sspMpdPrintStatus(0);
@@ -895,7 +929,8 @@ rocGo()
      - arg2 = 0xffff - Continuous
      - arg2 < 0xffff = arg2 times
   */
-  tiSoftTrig(1,0xffff,700,0);
+  tiSoftTrig(1,0xffff,100,0);
+//  tiSoftTrig(1,0xffff,100,0);
 #endif
 
 }
@@ -911,7 +946,7 @@ rocEnd()
   tiDisableRandomTrigger();
 #elif defined (INTFIXEDPULSER)
   /* Disable Fixed Rate trigger */
-  tiSoftTrig(1,0,700,0);
+  tiSoftTrig(1,0,100,0);
 #endif
 
 
@@ -951,6 +986,7 @@ rocTrigger(int arg)
   static int tcnt = 0;
   int count;
   int do_soft_err;
+  static int errorCount = 0;
   //tiStatus(1);
 
   tiSetOutputPort(1,0,0,0);
@@ -988,66 +1024,7 @@ rocTrigger(int arg)
 
   tiSetOutputPort(1,1,0,0);
 
-  /*
-    printf("*** Below are Status of any event(good/bad both, no MPD access, only ssp)\n");
-    sspMpdPrintStatus(0);
-    getchar();
-    sspPrintMPD_OB_STATUS();
-    mpdGStatus(1);
-    sspPrintEbStatus(0);
-  */
-
-  /*
-    int result;
-    for(i=11;i<12;i++)
-    {
-    printf("Port %d:\n", i);
-    result = sspGetMpdRxLen(0, i);
-    printf("MPD MAX RxLen %d: %d \n",i,     (result >>  0) & 0xffff);
-    printf("MPD current RxLen %d: %d \n",i, (result >> 16) & 0xffff);
-
-    result = sspGetEB_wordCount(0, i);
-    printf("MPD EB word count: %d: %d \n",i,     (result >>  0) & 0xffff);
-    printf("MPD elapsed time: %d: %d \n",i, (result >> 16) & 0xffff);
-    printf("\n\n");
-    }
-  */
-
-  do_soft_err = 0;
   int i;
-  for(i=0;i<12;i++)
-    {
-      if( (1 << i) & mpdGetSSPFiberMask(sspSlot(0)) )
-	{
-	  count = sspMpdGetSoftErrorCount(0,i);
-	  if(last_soft_err_cnt[i] < 0)
-	    last_soft_err_cnt[i] = count;
-	  else if(last_soft_err_cnt[i] != count)
-	    {
-	      last_soft_err_cnt[i] = count;
-	      do_soft_err = 1;
-	    }
-	}
-    }
-
-  if(do_soft_err)
-    {
-      daLogMsg("ERROR","SSP Soft Error");
-      printf("*** SSP SOFT ERROR ***\n");
-
-      //  printf("*** Dumping ssp mpd monitor sspMpdMonDump()\n");
-      //  sspMpdMonDump(0,7);
-      //  printf("*** sspMpdMonDump() ends\n");
-
-      printf("*** Status of MPD and SSP before reset ***\n");
-      sspPrintMPD_OB_STATUS(1);
-      sspMpdDalogStatus(0, mpdGetSSPFiberMask(sspSlot(0)));
-      mpdGStatus(1);
-      sspPrintEbStatus(0);
-
-      printf("*** Press Enter to continue***\n");
-      getchar();
-    }
 
   if (ssp_timeout == ssp_timeout_max )
     {
@@ -1080,8 +1057,9 @@ rocTrigger(int arg)
 	printf("tcnt = %u, EV Header: %u, MPD HDR = %u\n", tcnt&0xFFF, LSWAP(pBuf[1])&0xFFF, LSWAP(pBuf[5])&0xFFF);
 
       //      sspPrintBlock(pBuf, dCnt);
-      printf("*** Press Enter to start reset procedure***\n");
-      getchar();
+      errorCount++;
+      /* printf("*** Press Enter to start reset procedure***\n"); */
+      /* getchar(); */
       /*
       sspMpdFiberReset(0);
       //tiSetBlockLimit(1);
@@ -1270,6 +1248,12 @@ rocTrigger(int arg)
 		 bready);
 	}
 
+    }
+
+  if(errorCount > 10)
+    {
+      printf("errorCount = %d.   Too many errors.  Stopping TI triggers\n",errorCount);
+      tiSetBlockLimit(1);
     }
 
   tiSetOutputPort(0,0,0,0);
