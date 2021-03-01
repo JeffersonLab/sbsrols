@@ -30,13 +30,27 @@ unsigned int BLOCKLEVEL=1;
 
 #define FIBER_LATENCY_OFFSET 0x10  /* measured longest fiber length */
 
+
 /*
-  enable triggers (random or fixed rate) from internal pulser
- */
-//#define INTRANDOMPULSER
-//#define INTFIXEDPULSER
+  Global to configure the trigger source
+      0 : tsinputs
+      1 : TI random pulser
+      2 : TI fixed pulser
 
+  Set with rocSetTriggerSource(int source);
+*/
+int rocTriggerSource = 0;
+void rocSetTriggerSource(int source); // routine prototype
 
+/*
+  Global to configure pedestal subtraction mode
+      0 : subtraction mode DISABLED
+      1 : subtraction mode ENABLED
+
+  Set with sspSetPedSubtractionMode(int enable)
+*/
+int sspPedSubtractionMode = 0;
+void sspSetPedSubtractionMode(int enable); // routine prototype
 
 #include <unistd.h>
 #include <stdint.h>
@@ -453,7 +467,11 @@ void ssp_mpd_setup()
       char *line_ptr = NULL;
       size_t line_len;
       fiberID = -1, last_mpdSlot = -1;
-      if(fpedestal==NULL){
+      if((fpedestal==NULL) || (sspPedSubtractionMode == 0)) {
+
+	/* Correct sspPedSubtractionMode if fpedestal == NULL */
+	if(fpedestal==NULL) sspPedSubtractionMode = 0;
+
 	for(fiberID=0; fiberID<16; fiberID++)
         {
           for(apvId=0; apvId<15; apvId++)
@@ -465,7 +483,7 @@ void ssp_mpd_setup()
             }
           }
         }
-	printf("no pedestal file\n");
+	printf("no pedestal file or sspPedSubtractionmode == 0\n");
       }else{
 	printf("trying to read pedestal \n");
 
@@ -790,6 +808,18 @@ rocDownload()
 {
   printf("%s: Build date/time %s/%s\n", __func__, __DATE__, __TIME__);
 
+
+  /* Check usrString for pedestal subtraction mode */
+  if(strcmp("SSPPedSub",rol->usrString) == 0)
+    {
+      sspSetPedSubtractionMode(1);
+    }
+  else
+    {
+      sspSetPedSubtractionMode(0);
+    }
+
+
   apvbuffer = (char *)malloc(1024*50*sizeof(char));
   errorbuffer = (char *)malloc(1024*50*sizeof(char));
 
@@ -798,11 +828,14 @@ rocDownload()
    *****************/
 #ifdef TI_MASTER
 
-#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
-  tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
-#else
-  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
-#endif
+  if(rocTriggerSource == 0)
+    {
+      tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+    }
+  else
+    {
+      tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+    }
 
   /* Set needed TS input bits */
   tiEnableTSInput( TI_TSINPUT_1 );
@@ -911,27 +944,31 @@ rocGo()
   tiSetBlockLimit(0); // 0: disables block limit
   tiStatus(0);
 
-#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
-  printf("************************************************************\n");
-  printf("%s: TI Configured for Internal Pulser Triggers\n",
-	 __func__);
-  printf("************************************************************\n");
-#endif
+  if(rocTriggerSource != 0)
+    {
+      printf("************************************************************\n");
+      daLogMsg("INFO","TI Configured for Internal Pulser Triggers");
+      printf("************************************************************\n");
 
-  /* Example: How to start internal pulser trigger */
-#ifdef INTRANDOMPULSER
-  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-  tiSetRandomTrigger(1,0x7);
-#elif defined (INTFIXEDPULSER)
-  /*
-    Enable fixed rate with period (ns)
-    120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
-     - arg2 = 0xffff - Continuous
-     - arg2 < 0xffff = arg2 times
-  */
-  tiSoftTrig(1,0xffff,100,0);
-//  tiSoftTrig(1,0xffff,100,0);
-#endif
+      if(rocTriggerSource == 1)
+	{
+	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
+	  tiSetRandomTrigger(1,0x7);
+	}
+
+      if(rocTriggerSource == 2)
+	{
+	  /*    Enable fixed rate with period (ns)
+		120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
+		- arg2 = 0xffff - Continuous
+		- arg2 < 0xffff = arg2 times
+	  */
+	  tiSoftTrig(1,0xffff,100,0);
+	}
+    }
+
+  daLogMsg("INFO","SSP Pedestal Subtraction Mode %s",
+	   (sspPedSubtractionMode==1) ? "ENABLED" : "DISABLED");
 
 }
 
@@ -941,14 +978,18 @@ rocGo()
 void
 rocEnd()
 {
-#ifdef INTRANDOMPULSER
-  /* Disable random trigger */
-  tiDisableRandomTrigger();
-#elif defined (INTFIXEDPULSER)
-  /* Disable Fixed Rate trigger */
-  tiSoftTrig(1,0,100,0);
-#endif
 
+  if(rocTriggerSource == 1)
+    {
+      /* Disable random trigger */
+      tiDisableRandomTrigger();
+    }
+
+  if(rocTriggerSource == 2)
+    {
+      /* Disable Fixed Rate trigger */
+      tiSoftTrig(1,0,100,0);
+    }
 
   tiSetOutputPort(1,1,0,0);
   tiStatus(0);
@@ -1281,6 +1322,65 @@ setSSPData(int enable)
     SSP_READOUT = 0;
 
   vmeBusUnlock();
+}
+
+
+/*
+  Routine to configure pedestal subtraction mode
+      0 : subtraction mode DISABLED
+      1 : subtraction mode ENABLED
+*/
+
+void
+rocSetTriggerSource(int source)
+{
+#ifdef TI_MASTER
+  if(TIPRIMARYflag == 1)
+    {
+      printf("%s: ERROR: Trigger Source already enabled.  Ignoring change to %d.\n",
+	     __func__, source);
+    }
+  else
+    {
+      rocTriggerSource = source;
+
+      if(rocTriggerSource == 0)
+	{
+	  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+	}
+      else
+	{
+	  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+	}
+
+      daLogMsg("INFO","Setting trigger source (%d)", rocTriggerSource);
+    }
+#else
+  printf("%s: ERROR: TI is not Master  Ignoring change to %d.\n",
+	 __func__, source);
+#endif
+}
+
+/*
+  Routine to configure pedestal subtraction mode
+      0 : subtraction mode DISABLED
+      1 : subtraction mode ENABLED
+*/
+
+void
+sspSetPedSubtractionMode(int enable)
+{
+  if(TIPRIMARYflag == 1)
+    {
+      printf("%s: ERROR: Trigger Source already enabled.  Ignoring change to %d.\n",
+	     __func__, enable);
+    }
+  else
+    {
+      sspPedSubtractionMode = (enable) ? 1 : 0;
+
+      daLogMsg("INFO","Setting Pedestral Subtraction Mode (%d)", sspPedSubtractionMode);
+    }
 }
 
 /*
