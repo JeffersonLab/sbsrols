@@ -55,6 +55,13 @@ char *bufp;
 unsigned int BLOCKLEVEL = 1;
 #define BUFFERLEVEL 1
 
+
+/*
+  enable triggers (random or fixed rate) from internal pulser
+ */
+//#define INTRANDOMPULSER
+
+
 /* function prototype */
 void rocTrigger(int arg);
 int resetMPDs(unsigned int *broken_list, int nbroken);
@@ -86,7 +93,6 @@ rocDownload()
   /* Set crate ID */
   tiSetCrateID(0x01);		/* ROC 1 */
 
-/* #define INTRANDOMPULSER */
 #ifdef INTRANDOMPULSER
   tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
 #else
@@ -668,8 +674,8 @@ rocTrigger(int arg)
 	  obuf_nblock = mpdOBUF_GetBlockCount(id);
 	  // evb_nblock = mpdGetBlockCount(i);
 
-	  if(obuf_nblock != 1)
-	    printf(" Slot %2d - OBUF block count: %d \n", id, obuf_nblock);
+	  /* if(obuf_nblock != 1) */
+	  /*   printf(" Slot %2d - OBUF block count: %d \n", id, obuf_nblock); */
 
 	  if (obuf_nblock > 0)
 	    {			// read data
