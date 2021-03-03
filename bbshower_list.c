@@ -47,7 +47,9 @@ extern int fadcA32Base, nfadc;
 
 /* F1TDC Specifics */
 extern int f1tdcA32Base;
-#define F1_ADDR  (2<<19)
+extern int nf1tdc;
+#define F1_ADDR  (0xc80000)
+#define F1TDC_BANK 0x4
 
 /* for the calculation of maximum data words in the block transfer */
 unsigned int MAXFADCWORDS=0;
@@ -174,17 +176,17 @@ rocDownload()
 
   f1tdcA32Base = 0x08800000;
   /* Setup the F1TDC */
-  f1ConfigReadFile("/home/sbs-onl/cfg/f1tdc/bbshower_f1tdc.cfg");
+  f1ConfigReadFile("/home/sbs-onl/cfg/intelbbshower_f1tdc.cfg");
 
   iflag = 4;  /* read chip config from file */
 
-  f1Init(F1_ADDR, 1<<19, NF1TDC, iflag);
+  f1Init(F1_ADDR, 1<<19, 1, iflag);
 
   /* For multiple boards we enable multiblock, which also enables
      the bus error on the last board. When not in multiblock we can
      enable multiblock on the single board ourselves.
   */
-  if(NF1TDC>1) {
+  if(nf1tdc > 1) {
     f1EnableMultiBlock();
   } else {
     f1GEnableBusError();
@@ -194,10 +196,10 @@ rocDownload()
 
   f1GEnableData(F1_ALL_CHIPS); /* Enable data on all chips */
   printf("\n\n\n * * * * BEFORE Sending ReSync (to lock resolution) \n\n\n");
-  f1GStatus(0);
 
   tiStatus(0);
   sdStatus(0);
+  f1GStatus(0);
   faGStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -263,6 +265,10 @@ rocGo()
   /*  Enable FADC */
   faGEnable(0, 0);
 
+#ifdef F1_SOFTTRIG
+  f1GEnableSoftTrig();
+#endif
+
 #ifdef TI_MASTER
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   printf("************************************************************\n");
@@ -310,9 +316,15 @@ rocEnd()
   faGStatus(0);
 
   /* F1TDC Event status - Is all data read out */
-  f1GStatus(0);
   int islot = 0;
-  for(islot = 0; islot<NF1TDC; islot++) {
+#ifdef F1_SOFTTRIG
+  for(islot = 0; islot < nf1tdc; islot++)
+    f1DisableSoftTrig(f1Slot(islot));
+#endif
+
+  f1GStatus(0);
+
+  for(islot = 0; islot < nf1tdc; islot++) {
     f1Reset(f1Slot(islot),0);
   }
 
@@ -328,6 +340,7 @@ rocTrigger(int arg)
   int ifa = 0, stat, nwords, dCnt;
   unsigned int datascan, scanmask;
   int roType = 2, roCount = 0, blockError = 0;
+  int ii, islot;
 
   roCount = tiGetIntCount();
 
@@ -393,6 +406,55 @@ rocTrigger(int arg)
     }
   BANKCLOSE;
 
+  int roflag = 1;
+
+  if(nf1tdc <= 1) {
+    roflag = 1; /* DMA Transfer */
+  } else {
+    roflag = 2; /* Multiple DMA Transfer */
+  }
+
+  /* Set DMA for A32 - BLT64 */
+  vmeDmaConfig(2,3,0);
+  BANKOPEN(F1TDC_BANK,BT_UI4,0);
+
+#ifdef F1_SOFTTRIG
+  f1Trig(f1Slot(0));
+#endif
+
+  for(ii=0;ii<100;ii++)
+    {
+      datascan = f1Dready(f1Slot(0));
+      if (datascan>0)
+	{
+	  break;
+	}
+    }
+
+  if(datascan>0)
+    {
+      for(islot = 0; islot < nf1tdc; islot++) {
+       nwords = f1ReadEvent(f1Slot(islot),dma_dabufp,2*nf1tdc*64,roflag);
+
+      if(nwords < 0)
+	{
+	  printf("ERROR: in transfer (event = %d), status = 0x%x\n", tiGetIntCount(),nwords);
+	  *dma_dabufp++ = LSWAP(0xda000bad);
+	}
+      else
+	{
+	  dma_dabufp += nwords;
+	}
+      }
+    }
+  else
+    {
+      printf("ERROR: Data not ready in event %d, F1TDC slot %d\n",tiGetIntCount(),
+	     f1Slot(0));
+      *dma_dabufp++ = LSWAP(0xda000bad);
+    }
+  *dma_dabufp++ = LSWAP(0xda0000ff); /* Event EOB */
+  BANKCLOSE;
 
   /* Check for SYNC Event */
   if(tiGetSyncEventFlag() == 1)
@@ -424,6 +486,23 @@ rocTrigger(int arg)
 		}
 	    }
 	}
+
+      for(islot = 0; islot < nf1tdc; islot++)
+	{
+	  davail = f1Dready(f1Slot(islot));
+	  if(davail > 0)
+	    {
+	      printf("%s: ERROR: f1tdc Data available (%d) after readout in SYNC event \n",
+		     __func__, davail);
+
+	      while(f1Dready(f1Slot(islot)))
+		{
+		  vmeDmaFlush(f1GetA32(faSlot(islot)));
+		}
+	    }
+	}
+
+      // FIXME: Need f1tdc data check
     }
 
 }
@@ -434,6 +513,13 @@ rocCleanup()
 
   printf("%s: Reset all FADCs\n",__FUNCTION__);
   faGReset(1);
+
+  printf("%s: Reset all F1TDCs\n",__FUNCTION__);
+  int islot;
+  for(islot=0; islot<nf1tdc; islot++)
+    {
+      f1HardReset(f1Slot(islot)); /* Reset, and DO NOT restore A32 settings (1) */
+    }
 
 #ifdef TI_MASTER
   tiResetSlaveConfig();
