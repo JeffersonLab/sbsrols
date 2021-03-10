@@ -95,6 +95,10 @@ rocDownload()
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
+
+  /* Add HCAL2 to port 1*/
+  tiAddSlave(1);
+
 #endif
 
   /* Init the SD library so we can get status info */
@@ -125,18 +129,6 @@ rocPrestart()
 #endif
 
   tiStatus(0);
-
-  /* EXAMPLE: User bank of banks added to prestart event */
-  UEOPEN(500,BT_BANK,0);
-
-  /* EXAMPLE: Bank of data in User Bank 500 */
-  CBOPEN(1,BT_UI4,0);
-  *rol->dabufp++ = 0x11112222;
-  *rol->dabufp++ = 0x55556666;
-  *rol->dabufp++ = 0xaabbccdd;
-  CBCLOSE;
-
-  UECLOSE;
 
   printf("rocPrestart: User Prestart Executed\n");
 

@@ -1,0 +1,4 @@
+To build the "master" ROL:
+make hcal1_list.so
+To build the "slave" RO:"
+make hcal2_slave_list.so
