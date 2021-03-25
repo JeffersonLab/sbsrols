@@ -38,7 +38,7 @@
 /*
   enable triggers (random or fixed rate) from internal pulser
  */
-#define INTRANDOMPULSER
+/* #define INTRANDOMPULSER */
 /* #define INTFIXEDPULSER */
 
 /* CAEN 792 specific definitions */
@@ -82,9 +82,9 @@ rocDownload()
    *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
    */
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
-  tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
+  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Pulser enabled */
 #else
-  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+  tiSetTriggerSource(TI_TRIGGER_FPTRG); /* Front Panel TRG enabled */
 #endif
 
   /* Enable set specific TS input bits (1-6) */
@@ -104,6 +104,11 @@ rocDownload()
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
+
+  tiSetSyncEventInterval(1000);
+
+  /* Set prompt trigger width to 100ns = (23 + 2) * 4ns */
+  tiSetPromptTriggerWidth(23);
 #endif
 
   tiStatus(0);
@@ -112,7 +117,7 @@ rocDownload()
   int iadc;
   for(iadc = 0; iadc < Nc792; iadc++)
     {
-      c792SetGeoAddress(iadc, iadc+3);
+      c792SetGeoAddress(iadc, iadc+4);
     }
 
   printf("rocDownload: User Download Executed\n");
@@ -138,6 +143,7 @@ rocPrestart()
       c792Clear(iadc);
       c792EnableBerr(iadc);
       c792BitSet2(iadc, 1<<14);
+      c792EventCounterReset(iadc);
     }
   c792GStatus(0);
 
@@ -152,14 +158,21 @@ rocPrestart()
   if(C1190_ROMODE==0)  tdc1190InitMCST(mcstaddr);
   tdc1190GSetTriggerMatchingMode();
   tdc1190GSetEdgeResolution(100);
+  tdc1190GSetEdgeDetectionConfig(3);
+  tdc1190GSetWindowWidth(450); // ns
+ tdc1190GSetWindowOffset(-500); // ns
+ tdc1190GEnableTriggerTimeSubtraction(); // Uses the beginning of the match window instead of the latest bunch reset
 
-  tdc1190ConfigureGReadout(C1190_ROMODE);
-
+ tdc1190GTriggerTime(1); // flag = 1 enable (= 0 disable) writing out of the Extended Trigger Time Tag in the output buffer.
+tdc1190ConfigureGReadout(C1190_ROMODE);
   for(itdc=0; itdc<NUM_V1190; itdc++)
     {
       tdc1190SetTriggerMatchingMode(itdc);
       tdc1190SetEdgeResolution(itdc,100);
-      tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
+      tdc1190SetEdgeDetectionConfig(itdc,3);
+  tdc1190SetWindowWidth(itdc,450); // ns
+ tdc1190SetWindowOffset(itdc,-500); // ns
+     tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
     }
 
   tdc1190GStatus(1);
@@ -277,7 +290,7 @@ rocTrigger(int arg)
 	 "64" is ignored in Linux */
 #if(C1190_ROMODE==C1190_CBLT)
       vmeDmaConfig(2,3,2);
-      dCnt = tdc1190CBLTReadBlock(0,dma_dabufp,100,2);
+      dCnt = tdc1190CBLTReadBlock(0,dma_dabufp,2000,2);
 #else
       vmeDmaConfig(2,3,2);
       dCnt = tdc1190ReadBlock(0,dma_dabufp,64000,2|(BLOCKLEVEL<<8));
@@ -306,9 +319,6 @@ rocTrigger(int arg)
 
   int iadc;
 
-  /* A24 - BLT32 (1,2,0) works.
-     I could not get A24 - BLT64 (1,3,0) to work.
-     Might need starting address to be 8-byte aligned */
   vmeDmaConfig(1,2,0);
 
   /* Check if an Event is available */
@@ -329,9 +339,6 @@ rocTrigger(int arg)
 	      *dma_dabufp++ = LSWAP(iadc);
 	      *dma_dabufp++ = LSWAP(0xda00bad1);
 	      c792Clear(iadc);
-#ifdef TI_MASTER
-	      tiSetBlockLimit(20);
-#endif
 	    }
 	  else
 	    {
@@ -348,16 +355,59 @@ rocTrigger(int arg)
       *dma_dabufp++ = LSWAP(datascan);
       *dma_dabufp++ = LSWAP(scanmask);
       *dma_dabufp++ = LSWAP(0xda00bad2);
-#ifdef TI_MASTER
-      tiSetBlockLimit(20);
-#endif
 
       for(iadc = 0; iadc < Nc792; iadc++)
 	c792Clear(iadc);
     }
   BANKCLOSE;
 
-  /* Set TI output 0 low */
+  /* Check for SYNC Event or Bufferlevel == 1 */
+  if((tiGetSyncEventFlag() == 1) || (tiGetBlockBufferLevel() == 1))
+    {
+      /* Check for data available */
+      int davail = tiBReady();
+      if(davail > 0)
+	{
+	  printf("%4d: ERROR: TI Data available (%d) after readout! \n",
+		 tiGetIntCount(), davail);
+
+	  while(tiBReady())
+	    {
+	      vmeDmaFlush(tiGetAdr32());
+	    }
+	}
+
+      /* Check for ANY data in 1190 TDCs */
+      datascan = tdc1190GDready(1);
+      if(datascan > 0)
+	{
+	  printf("%4d: ERROR: C1190 Data available (0x%x) after readout!\n",
+		 tiGetIntCount(), datascan);
+	  int itdc;
+	  for(itdc = 0; itdc < 32; itdc++)
+	    {
+	      if((1 << itdc) & datascan)
+		{
+		  tdc1190Clear(itdc);
+		}
+	    }
+	}
+
+      /* Check for ANY data in 792 ADCs */
+      for(iadc = 0; iadc < Nc792; iadc++)
+	{
+	  datascan = c792Dready(iadc);
+	  if(datascan)
+	    {
+	      printf("%4d: ERROR: C792 Data availble (%d) after readout!\n",
+		     tiGetIntCount(), datascan);
+	      c792Clear(iadc);
+	    }
+
+	}
+
+    }
+      /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
 
 }
