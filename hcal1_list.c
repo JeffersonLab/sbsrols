@@ -56,9 +56,9 @@
 #ifdef ENABLE_FADC
 /* FADC Library Variables */
 extern int fadcA32Base, nfadc;
-#define NFADC     15
+#define NFADC     16
 /* Address of first fADC250 */
-#define FADC_ADDR (4<<19)
+#define FADC_ADDR (3<<19)
 /* Increment address to find next fADC250 */
 #define FADC_INCR (1<<19)
 

@@ -275,11 +275,12 @@ rocPrestart()
 #ifdef ENABLE_F1
   f1tdcA32Base = 0x08800000;
   /* Setup the F1TDC */
-  f1ConfigReadFile("/home/sbs-onl/cfg/f1tdc/hcal_f1tdc.cfg");
+  f1ConfigReadFile("/home/sbs-onl/cfg/f1tdc/hcal_f1tdc_3125.cfg");
 
   int islot = 0;
   iflag = F1_SD_ADDR; /* with SD address */
   iflag |= 4;  /* read from file */
+  iflag |= 0x10000; /* SDC mode = 1 for external clock and syncreset */
   printf("iflag = 0x%x\n",iflag);
 
   /* f1AddrList[0] = 4<<19; */
@@ -287,7 +288,10 @@ rocPrestart()
   /* f1AddrList[2] = 6<<19; */
   /* f1AddrList[3] = 7<<19; */
   /* f1AddrList[4] = 8<<19; */
+  f1SetClockPeriod(32);
   f1Init(F1_ADDR,1<<19,NF1TDC,iflag);
+  usleep(30000);
+
   /* f1Init(F1_ADDR,0,NF1TDC,iflag); */
   islot = 0;
   printf("\n\n\n - - - - AFTER f1Init - - - - - \\n\n\n");
@@ -324,12 +328,12 @@ rocPrestart()
   f1GEnableData(F1_ALL_CHIPS); /* Enable data on all chips */
   printf("\n\n\n * * * * BEFORE Sending ReSync (to lock resolution) \n\n\n");
   f1GStatus(0);
-
+  /*
   for(islot = 0; islot < NF1TDC; islot++)
     {
       f1SetWindow(f1ID[islot],F1_WINDOW,F1_LATENCY,0);
     }
-
+  */
 #endif /* End: ENABLE_F1 */
 
 #ifdef ENABLE_HCAL_PULSER
