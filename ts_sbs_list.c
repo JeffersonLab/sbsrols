@@ -1,9 +1,11 @@
 /*************************************************************************
  *
- *  ts_list.c - Library of routines for readout and buffering of
+ *  ts_sbslist.c - Library of routines for readout and buffering of
  *                events using a JLAB Pipeline Trigger Supervisor (TS) with
  *                a Linux VME controller in CODA 3.0
  *
+ *
+ *     This is for the SBS TS ~ August 2021
  */
 
 /* Event Buffer definitions */
@@ -29,11 +31,9 @@ extern int nTD;
 #include "sdLib.h"
 #include "tdLib.h"
 
-#define BLOCKLEVEL 40
+#define BLOCKLEVEL  1
 #define BUFFERLEVEL 4
-#define SYNC_INTERVAL 100000
-
-extern unsigned int tsTriggerSource;
+#define SYNC_INTERVAL 10000
 
 /* Set to Zero to define a Front Panel Trigger source
    RANDOM_RATE defines the Pulser rate
@@ -109,9 +109,6 @@ rocDownload()
   tsSetTriggerHoldoff(3,0,0);  /* Disable */
   tsSetTriggerHoldoff(4,63,0);  /* max 4 triggers in 64ns + 64ns*63 = 4.032 microsec */
 
-  /* Set the sync delay width to 0x40*32 = 2.048us */
-  tsSetSyncDelayWidth(0x30, 0x40, 1);
-
   /*
    * Set the Block Buffer Level
    *  0:  Pipeline mode
@@ -124,9 +121,6 @@ rocDownload()
   tsSetBlockLimit(0);
 
   /* Override the busy source set in tsInit (only if TS crate running alone) */
-
-#define USETD
-#ifdef USETD
 
  /* Setup TDs - */
   tdInit(0,0,0,0);
@@ -144,10 +138,6 @@ rocDownload()
   /* Reset Active ROC Masks on all TD modules */
   tsTriggerReadyReset();
 
-#else
-  tsSetBusySource(TS_BUSY_LOOPBACK,1);
-  tsAddSlave(1);
-#endif
 
 /*   tsSetPrescale(0); */
 
@@ -318,3 +308,9 @@ rocCleanup()
   int islot=0;
 
 }
+
+/*
+  Local Variables:
+  compile-command: "make ts_sbs_list.so"
+  End:
+ */
