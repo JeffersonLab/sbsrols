@@ -20,11 +20,11 @@ extern volatile ZYNC_REGS *vtp;
 /*
   Global to configure pedestal subtraction mode
       0 : subtraction mode DISABLED
-      1 : subtraction mode ENABLED
+      1 : subtraction mode ENABLED 
 
   Set with vtpSetPedSubtractionMode(int enable)
 */
-int vtpPedSubtractionMode = 0;
+int vtpPedSubtractionMode = 1;
 void vtpSetPedSubtractionMode(int enable); // routine prototype
 
 /* vtp defs */
@@ -46,7 +46,7 @@ int dalma_rval, dalma_tot;
 
 #define DALMA_INIT {				\
   dalma_tot = 0;				\
-  bufp = (char *) &(apvbuffer[0]);		\
+  bufp = (char *) &(dalmabuffer[0]);		\
   dalma_rval = sprintf (bufp,"\n");					\
   if(dalma_rval > 0) {bufp += dalma_rval; dalma_tot += dalma_rval;}}
 
@@ -56,10 +56,10 @@ int dalma_rval, dalma_tot;
 
 #define DALMA_LOG {				\
     if(dalma_tot > 1)				\
-      daLogMsg("INFO",apvbuffer);}
+      daLogMsg("INFO",dalmabuffer);}
 
+char *dalmabuffer;
 char *apvbuffer;
-char *errorbuffer;
 char *bufp;
 
 
@@ -87,24 +87,14 @@ vtpMpdDalogStatus(unsigned int fmask)
   DALMA_MSG("MPD  Ctrl Status    Up    Lock   TX  RX     HARD   FRAME    CNT     Builder\n");
   DALMA_MSG("--------------------------------------------------------------------------------\n");
 
-  DALMA_LOG;
-
   for(impd=0; impd<32; impd++)
     {
-      if( (impd % 16) == 0 )
+      if( (impd % 8) == 0 )
 	{
+	  DALMA_LOG;
 	  DALMA_INIT;
 	}
-
-      if( ((1 << impd) & fmask) == 0)
-	{
-	  if( (impd % 16) == 15 )
-	    {
-	      DALMA_LOG;
-	    }
-
-	  continue;
-	}
+      if( (fmask & (1 << impd)) == 0) continue;
 
       DALMA_MSG("%2d   ",impd);
 
@@ -135,10 +125,6 @@ vtpMpdDalogStatus(unsigned int fmask)
 
       DALMA_MSG("\n");
 
-      if( (impd % 16) == 15 )
-	{
-	  DALMA_LOG;
-	}
     }
 
   DALMA_LOG;
@@ -171,6 +157,13 @@ vtpPrintMPD_OB_STATUS(int dalogFlag)
     r.trigger_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.trigger_count);
     r.missed_trigger = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.missed_trigger);
     r.incoming_trigger = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.incoming_trigger);
+
+    if( (k % 8) == 0 )
+      {
+	DALMA_LOG;
+	DALMA_INIT;
+      }
+
 
     DALMA_MSG(" %2d     ", mpdSlot(k));
 
@@ -212,7 +205,7 @@ vtpPrintMPD_OB_STATUS(int dalogFlag)
     }
   else
     {
-      printf("%s",apvbuffer);
+      printf("%s",dalmabuffer);
       printf("\n");
     }
 
@@ -228,6 +221,12 @@ vtpPrintMPD_OB_STATUS(int dalogFlag)
 
     r.sdram_flag_wc = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.sdram_flag_wc);
     r.output_buffer_flag_wc = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.output_buffer_flag_wc);
+
+    if( (k % 8) == 0 )
+      {
+	DALMA_LOG;
+	DALMA_INIT;
+      }
 
     DALMA_MSG(" %2d    ", mpdSlot(k));
 
@@ -268,7 +267,7 @@ vtpPrintMPD_OB_STATUS(int dalogFlag)
     }
   else
     {
-      printf("%s",apvbuffer);
+      printf("%s",dalmabuffer);
       printf("\n");
     }
 }
@@ -276,8 +275,14 @@ vtpPrintMPD_OB_STATUS(int dalogFlag)
 void vtp_mpd_setup()
 {
   static int just_once = 0;
-  if( (just_once++) > 0)
-    return;
+  if( (just_once) > 0)
+    {
+      daLogMsg("INFO", " %d run%s since last vtp_mpd_setup\n",
+	       just_once, (just_once>1)?"s":"");
+      daLogMsg("INFO",apvbuffer);
+      just_once++;
+      return;
+    }
 
   /*****************
    *   VTP SETUP
@@ -312,14 +317,14 @@ void vtp_mpd_setup()
   }
 
 
-  int build_all_samples = 1;
+  int build_all_samples = 0;
   //1 => For pedestal run, will write ADC samples from the APV (i.e. disable zero suppression)
   //0 => will apply the threshold and peak position logic to decide if data is written to the event (i.e. zero suppression enabled)
 
   int build_debug_headers = 0;
   //1 => will write extra debugging info headers about the common-mode processing (which APV chip reported data, avg A/B values and counts for each APV)
   //0 => disables extra debug info headers
-  int enable_cm = 0;
+  int enable_cm = 1;
   //1 => enables the common-mode subtraction logic
   //0 => disables the common-mode subtraction logic (so raw ADC samples only have the channel offset applied)
   int noprocessing_prescale = 100;
@@ -330,19 +335,17 @@ void vtp_mpd_setup()
 		   enable_cm, noprocessing_prescale);
 
   //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
-  int apvId, cModeMin, cModeMax;
+  int apvId, cModeMin, cModeMax, cModeRocId;
   int fiberID = -1, last_mpdSlot = -1;
-#ifdef COMMON_MODE_SUPPORTED
   //FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange.txt","r");
   //FILE *fcommon   = NULL;
-  FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange_986.txt","r");
-#endif
+  FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange_220.txt","r");
 
   //valid pedestal file => will load APV offset file and subtract from APV samples
   //NULL => will load 0's for all APV offsets
   //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal.txt","r");
   //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal_test.txt","r");    //Test file with offset set to -1000 in fiber 15, apv 11, channel 10
-  FILE *fpedestal = fopen("/home/sbs-onl/cfg/gem_ped_986.dat","r");//all GEMs
+  FILE *fpedestal = fopen("/home/sbs-onl/cfg/gem_ped_220.dat","r");//all GEMs
   //FILE *fpedestal = NULL;
 
   // Load pedestal & threshold file settings
@@ -377,15 +380,22 @@ void vtp_mpd_setup()
       {
 	getline(&line_ptr, &line_len, fpedestal);
 
-	n = sscanf(line_ptr, "%10s %d %d", buf, &i2, &i3);
+	n = sscanf(line_ptr, "%10s %d %d %d", buf, &i1, &i2, &i3);
 	if( (n == 4) && !strcmp("APV", buf))
           {
+            cModeRocId = i1; 
             fiberID = i2;
             apvId = i3;
             continue;
           }
 
+
 	n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
+
+      	// TODO: need to replace vtpRocId with the ROC ID for this VTP to see if settings are for us
+        //if(cModeRocId != vtpRocId)
+	//  continue;
+	//
 	if(n == 3)
           {
 	    //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
@@ -396,24 +406,27 @@ void vtp_mpd_setup()
     fclose(fpedestal);
   }
 
-#ifdef COMMON_MODE_SUPPORTED
   // Load common-mode file settings
   if(fcommon==NULL){
     printf("no commonMode file\n");
   }else{
     printf("trying to read commonMode\n");
-    while(fscanf(fcommon, "%d %d %d %d", &fiberID, &apvId, &cModeMin, &cModeMax)==4){
-      printf("fiberID %d %d %d %d \n", fiberID, apvId, cModeMin, cModeMax);
+    while(fscanf(fcommon, "%d %d %d %d %d", &cModeRocId, &fiberID, &apvId, &cModeMin, &cModeMax)==5){
+      printf("fiberID %d %d %d %d %d \n", cModeRocId, fiberID, apvId, cModeMin, cModeMax);
 
       //	  cModeMin = 200;
       //	  cModeMax = 800;
       //	  cModeMin = 0;
       //	  cModeMax = 4095;
+
+      // TODO: need to replace vtpRocId with the ROC ID for this VTP to see if settings are for us
+      //if(cModeRocId != vtpRocId)
+      //  continue;
+
       vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
     }
     fclose(fcommon);
   }
-#endif
 
   vtpRocMigReset(1);
   vtpRocMigReset(0);
@@ -424,6 +437,12 @@ void vtp_mpd_setup()
    *****************/
   int rval = OK;
   unsigned int errSlotMask = 0;
+  /* Index is the mpd / fiber... value mask if ADCs with APV config errors */
+  uint32_t apvConfigErrorMask[32];
+  uint32_t apvErrorTypeMask[32]; /* 0 : mpd init, 1: apv not found , 2: config */
+
+  memset(apvConfigErrorMask, 0 , sizeof(apvConfigErrorMask));
+  memset(apvErrorTypeMask, 0 , sizeof(apvErrorTypeMask));
 
   mpdSetPrintDebug(0);
 
@@ -434,8 +453,8 @@ void vtp_mpd_setup()
   unsigned int chanmask = vtpMpdGetChanUpMask();
 
   chanmask = mpdGetVTPFiberMask();
-  mpdInit(chanmask, 0, 32,
-	  MPD_INIT_FIBER_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK);
+  mpdInitVTP(chanmask, MPD_INIT_FIBER_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK);
+  /* mpdInit(chanmask, 0,32,MPD_INIT_FIBER_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK); */
   fnMPD = mpdGetNumberMPD();
 
 
@@ -455,9 +474,10 @@ void vtp_mpd_setup()
 
     int try_cnt = 0;
 
-    mpdHISTO_MemTest(i);
+    /* mpdHISTO_MemTest(i); */
 
   retry:
+    error_status = OK;
 
     printf(" Try initialize I2C mpd in slot %d\n",i);
     if (mpdI2C_Init(i) != OK) {
@@ -477,6 +497,7 @@ void vtp_mpd_setup()
       {
 	printf("APV blind scan failed for %d TIMES !!!!\n\n", try_cnt);
 	errSlotMask |= (1 << i);
+	continue;
       }
 
     printf(" - APV Reset\n");
@@ -531,7 +552,13 @@ void vtp_mpd_setup()
 		  printf(" - - ");
 		fflush(stdout);
 		error_status = ERROR;
+		apvConfigErrorMask[i] |= (1 << mpdApvGetAdc(i,iapv));
+		apvErrorTypeMask[i] |= (1 << 2);
 		badTry = 1;
+	      }
+	    else
+	      {
+		apvConfigErrorMask[i] &= ~(1 << mpdApvGetAdc(i,iapv));
 	      }
 	  }
 	printf("\n");
@@ -547,6 +574,9 @@ void vtp_mpd_setup()
 	    if(itry > 0)
 	      {
 		printf(" ****** SUCCESS!!!! ******\n");
+		error_status = OK;
+		apvConfigErrorMask[i] = 0;
+		apvErrorTypeMask[i] &= ~(1 << 2);
 		fflush(stdout);
 	      }
 	    break;
@@ -581,17 +611,41 @@ void vtp_mpd_setup()
   rval = sprintf(bufp, "\n");
   if(rval > 0)
     bufp += rval;
-  rval = sprintf(bufp, "Configured APVs (ADC 15 ... 0)\n");
+  rval = sprintf(bufp, "Configured APVs (ADC 15 ... 0)            --------------------ERRORS------------------\n");
   if(rval > 0)
     bufp += rval;
 
   int ibit;
-  int impd, id, iapv;
-  for (impd = 0; impd < fnMPD; impd++)
+  int ifiber, id, iapv;
+  for (ifiber = 0; ifiber < 32; ifiber++)
     {
-      id = mpdSlot(impd);
+      if(ifiber == 16)
+	{
+	  daLogMsg("INFO",apvbuffer);
+	  bufp = (char *) &(apvbuffer[0]);
+	}
 
-      if (mpdGetApvEnableMask(id) != 0)
+      id = ifiber;
+
+      if( ((1 << id) & mpdGetVTPFiberMask()) == 0)
+	continue;
+
+
+      /* Build the ADCmask of those in the config file */
+      uint32_t configAdcMask = 0;
+      for (iapv = 0; iapv < mpdGetNumberAPV(id); iapv++)
+	{
+	  if(mpdApvGetAdc(id,iapv) > -1)
+	    {
+	      configAdcMask |= (1 << mpdApvGetAdc(id,iapv));
+	      apvErrorTypeMask[ifiber] |= (1 << 1);
+	    }
+	}
+
+      if(mpdGetFpgaRevision(ifiber) == 0)
+	apvErrorTypeMask[ifiber] = (1 << 0);
+
+      /* if (mpdGetApvEnableMask(id) != 0) */
 	{
 	  rval = sprintf(bufp, "  MPD %2d : ", id);
 	  if(rval > 0)
@@ -607,10 +661,24 @@ void vtp_mpd_setup()
 		}
 	      if (mpdGetApvEnableMask(id) & (1 << ibit))
 		{
-		  rval = sprintf(bufp, "1");
+		  if(apvConfigErrorMask[id] & (1 << ibit))
+		    {
+		      rval = sprintf(bufp, "C");
+		    }
+		  else
+		    {
+		      rval = sprintf(bufp, "1");
+		    }
 		  if(rval > 0)
 		    bufp += rval;
 		  iapv++;
+		}
+	      else if(configAdcMask & (1 << ibit))
+		{
+		  rval = sprintf(bufp, "E");
+		  errSlotMask |= (1 << id);
+		  if(rval > 0)
+		    bufp += rval;
 		}
 	      else
 		{
@@ -619,12 +687,18 @@ void vtp_mpd_setup()
 		    bufp += rval;
 		}
 	    }
-	  rval = sprintf(bufp, " (#APV %d)", iapv);
+	  rval = sprintf(bufp, " (#APV %2d)", iapv);
 	  if(rval > 0)
 	    bufp += rval;
 	  if(errSlotMask & (1 << id))
 	    {
-	      rval = sprintf(bufp, " INIT ERRORS\n");
+	      rval = sprintf(bufp, " %s  %s  %s\n",
+			     (apvErrorTypeMask[id] & 0x1) ? "*MPD NotFound*" :
+			     "              ",
+			     (apvErrorTypeMask[id] & 0x2) ? "*APV NotFound*" :
+			     "              ",
+			     (apvErrorTypeMask[id] & 0x4) ? "*APV Config*" :
+			     "");
 	      if(rval > 0)
 		bufp += rval;
 	    }
@@ -635,22 +709,22 @@ void vtp_mpd_setup()
 		bufp += rval;
 	    }
 	}
-      else
-	{
-	  rval = sprintf(bufp,
-			 "  MPD %2d :                                INIT ERRORS\n", id);
-	  if(rval > 0)
-	    bufp += rval;
-	}
+      /* else */
+      /* 	{ */
+      /* 	  rval = sprintf(bufp, */
+      /* 			 "  MPD %2d :                                INIT ERRORS\n", id); */
+      /* 	  if(rval > 0) */
+      /* 	    bufp += rval; */
+      /* 	} */
     }
   rval = sprintf(bufp, "\n");
   if(rval > 0)
     bufp += rval;
 
-  printf("%s",apvbuffer);
+  daLogMsg("INFO",apvbuffer);
 
   if ((errSlotMask != 0) || (error_status != OK))
-    daLogMsg("WARN", "MPD initialization errors");
+    daLogMsg("ERROR", "MPD initialization errors");
 }
 
 /****************************************
@@ -671,8 +745,8 @@ vtpMpdDownload()
     }
 #endif
 
+  dalmabuffer = (char *)malloc(1024*50*sizeof(char));
   apvbuffer = (char *)malloc(1024*50*sizeof(char));
-  errorbuffer = (char *)malloc(1024*50*sizeof(char));
 
   printf("rocDownload: User Download Executed\n");
 }
@@ -740,6 +814,7 @@ vtpMpdEnd()
     mpdTRIG_Disable(mpdSlot(k));
   }
 
+  vtpPrintMPD_OB_STATUS(1);
 }
 
 void
@@ -756,11 +831,11 @@ vtpMpdReset()
 void
 vtpMpdCleanup()
 {
+  if(dalmabuffer)
+    free(dalmabuffer);
+
   if(apvbuffer)
     free(apvbuffer);
-
-  if(errorbuffer)
-    free(errorbuffer);
 }
 
 /*

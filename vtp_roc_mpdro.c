@@ -344,6 +344,7 @@ rocStatus()
   /* Put out some Status' for debug */
   mpdGStatus(0);
   vtpMpdPrintStatus(0,1);
+
   vtpRocStatus(0);
 
 }
