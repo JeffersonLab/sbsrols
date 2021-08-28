@@ -11,7 +11,7 @@
 /* Event Buffer definitions */
 /* Default block level */
 unsigned int BLOCKLEVEL=1;
-#define BUFFERLEVEL 5
+#define BUFFERLEVEL 1
 #define MAX_EVENT_LENGTH   32768*12*BLOCKLEVEL      /* Size in Bytes */
 #define SSP_MAX_EVENT_LENGTH 32000*12*BLOCKLEVEL     //SSP block length
 #define MAX_EVENT_POOL     50
@@ -39,7 +39,7 @@ unsigned int BLOCKLEVEL=1;
 
   Set with rocSetTriggerSource(int source);
 */
-int rocTriggerSource = 0;
+int rocTriggerSource = 1;
 void rocSetTriggerSource(int source); // routine prototype
 
 /*
@@ -441,8 +441,12 @@ void ssp_mpd_setup()
       int enable_cm = 0;
       //1 => enables the common-mode subtraction logic
       //0 => disables the common-mode subtraction logic (so raw ADC samples only have the channel offset applied)
+      int noprocessing_prescale = 100;
+      //0 => prescaling disabled (all events are processed)
+      //1-65535 => every Nth event has common-mode subtract and zero suppression disabled
 
-      sspMpdEbSetFlags(sspSlot(issp), build_all_samples, build_debug_headers, enable_cm);
+      sspMpdEbSetFlags(sspSlot(issp), build_all_samples, build_debug_headers,
+		       enable_cm, noprocessing_prescale);
 
       sspEnableBusError(sspSlot(issp));
       sspSetBlockLevel(sspSlot(issp),BLOCKLEVEL);
@@ -450,14 +454,16 @@ void ssp_mpd_setup()
       //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
       int sspSlotID, mpdSlot, apvId, cModeMin, cModeMax;
       int fiberID = -1, last_mpdSlot = -1;
-      FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange.txt","r");
+      //FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange.txt","r");
       //FILE *fcommon   = NULL;
+      FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange_986.txt","r");
 
       //valid pedestal file => will load APV offset file and subtract from APV samples
       //NULL => will load 0's for all APV offsets
       //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal.txt","r");
       //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal_test.txt","r");    //Test file with offset set to -1000 in fiber 15, apv 11, channel 10
-      FILE *fpedestal = NULL;
+      FILE *fpedestal = fopen("/home/sbs-onl/cfg/gem_ped_986.dat","r");//all GEMs
+      //FILE *fpedestal = NULL;
 
       // Load pedestal & threshold file settings
       int stripNo;
@@ -690,7 +696,7 @@ void ssp_mpd_setup()
     mpdAPV_Reset101(i);
 
     // <- MPD+APV initialization ends here
-
+    sleep(1);
   } // end loop on mpds
   //END of MPD configure
 
@@ -862,6 +868,13 @@ rocDownload()
 
   tiSetTriggerPulse(1,0,25,0);
 
+  /*
+    Increase the OT#2 width for the MPD input trigger
+    8 -> (8 + 2) * 4ns = 40ns
+  */
+  /* Set prompt output width (100 + 2) * 4 = 408 ns */
+  tiSetPromptTriggerWidth(127);
+
   tiSetOutputPort(1,1,0,0);
 
   tiStatus(0);
@@ -882,6 +895,7 @@ rocPrestart()
   for(i=0;i<sizeof(last_soft_err_cnt)/sizeof(last_soft_err_cnt[0]);i++)
     last_soft_err_cnt[i] = -1;
 
+  tiSetBlockLimit(0); // 0: disables block limit
   tiStatus(0);
   tiSetPrescale(0);
   tiSetOutputPort(1,1,0,0);
@@ -941,7 +955,6 @@ rocGo()
   sspMpdDalogStatus(0, mpdGetSSPFiberMask(sspSlot(0)));
   /* Use this info to change block level is all modules */
 
-  tiSetBlockLimit(0); // 0: disables block limit
   tiStatus(0);
 
   if(rocTriggerSource != 0)
@@ -953,7 +966,7 @@ rocGo()
       if(rocTriggerSource == 1)
 	{
 	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-	  tiSetRandomTrigger(1,0x7);
+	  tiSetRandomTrigger(1,0xd);
 	}
 
       if(rocTriggerSource == 2)
@@ -970,6 +983,8 @@ rocGo()
   daLogMsg("INFO","SSP Pedestal Subtraction Mode %s",
 	   (sspPedSubtractionMode==1) ? "ENABLED" : "DISABLED");
 
+  // FIXME: REMOVE THIS!!
+//  tiSetBlockLimit(1); // 0: disables block limit
 }
 
 /****************************************
@@ -1077,6 +1092,7 @@ rocTrigger(int arg)
       //sspSoftReset(0);
 
       printf("*** Status of MPD and SSP before reset ***\n");
+      sspMpdPrintStatus(0);
       sspPrintMPD_OB_STATUS(1);
       sspMpdDalogStatus(0, mpdGetSSPFiberMask(sspSlot(0)));
       mpdGStatus(1);
@@ -1109,8 +1125,8 @@ rocTrigger(int arg)
       sspMpdFiberReset(0);
       printf("*** Invoking sspSoftReset() (tempararily skipped for testing)***\n");
       // sspSoftReset(0);
-
-      int i_re, k_re;
+*/
+/*      int i_re, k_re;
       printf("*** Invoking MPD resets***\n");
       for(k_re=0;k_re<fnMPD;k_re++)
       {
@@ -1138,14 +1154,13 @@ rocTrigger(int arg)
 
 
       printf("\n\n*** Status of MPD and SSP after reset ***\n");
-      sspPrintMPD_OB_STATUS();
+      //sspPrintMPD_OB_STATUS();
       sspMpdPrintStatus(0);
       mpdGStatus(1);
       sspPrintEbStatus(0);
       printf("*** Reset done!!! press enter to continue...*** \n ");
-      getchar();
-      */
-    }
+//      getchar();
+ */   }
   else
     {
 #ifdef LOUD_MPD_READOUT
@@ -1293,8 +1308,8 @@ rocTrigger(int arg)
 
   if(errorCount > 10)
     {
-      printf("errorCount = %d.   Too many errors.  Stopping TI triggers\n",errorCount);
-      tiSetBlockLimit(1);
+     printf("errorCount = %d.   Too many errors.  Stopping TI triggers\n",errorCount);
+     tiSetBlockLimit(1);
     }
 
   tiSetOutputPort(0,0,0,0);
