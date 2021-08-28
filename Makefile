@@ -16,7 +16,7 @@ ARCH=armv7l
 # Plug in your primary readout lists here..
 VMEROL		= vtp_trigtest.so vtp_roc_mpdro.so
 # Add shared library dependencies here.  (jvme already included)
-ROLLIBS		= -li2c -lmpd -lconfig -lvtp
+ROLLIBS		= -li2c -lmpd -lconfig -lvtp -ldalmaRol
 
 COMPILE_TIME	= \""$(shell date)"\"
 

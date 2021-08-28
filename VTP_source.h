@@ -19,6 +19,10 @@
 #include "remexLib.h"
 #include "vtpLib.h"
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
+
 extern void daLogMsg(char *severity, char *fmt,...);
 int vtpUploadAll(char *string, int length);
 extern int vtpConfig(char *fname);
@@ -40,6 +44,8 @@ void rocEnd();
 void rocTrigger(int EVTYPE);
 void rocTrigger_done();
 void rocReset();
+void rocLoad();
+void rocCleanup();
 
 static int VTP_handlers, VTPflag;
 static int VTP_isAsync;
@@ -238,6 +244,42 @@ __reset()
   {
     rocReset();
   }
+}
+
+__attribute__((constructor)) void start (void)
+{
+  static int started=0;
+
+  if(started==0)
+    {
+      daLogMsg("INFO","ROC Load");
+
+      rocLoad();
+      started=1;
+
+      dalmaInit(1);
+    }
+
+}
+
+/* This routine is automatically executed just before the shared libary
+   is unloaded.
+
+   Clean up memory that was allocated
+*/
+__attribute__((destructor)) void end (void)
+{
+  static int ended=0;
+
+  if(ended==0)
+    {
+      printf("ROC Cleanup\n");
+      rocCleanup();
+      dalmaClose();
+
+      ended=1;
+    }
+
 }
 
 #endif

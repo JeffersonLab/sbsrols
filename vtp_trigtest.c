@@ -55,11 +55,10 @@ rocDownload()
 
   firstEvent = 1;
 
-  /* Open VTP library */
-  stat = vtpOpen(VTP_FPGA_OPEN | VTP_I2C_OPEN | VTP_SPI_OPEN);
-  if(stat < 0)
+  if(vtpInit(VTP_INIT_CLK_VXS_250))
     {
-      printf(" Unable to Open VTP driver library.\n");
+      printf("vtpInit() **FAILED**. User should not continue.\n");
+      return;
     }
 
 #define RELOAD_FIRMWARE
@@ -235,6 +234,7 @@ rocPrestart()
   /*Send Prestart Event*/
   vtpRocEvioWriteControl(0xffd1,rol->runNumber,rol->runType);
 
+
   rocStatus();
 
   printf(" Done with User Prestart\n");
@@ -295,7 +295,9 @@ void
 rocStatus()
 {
   /* Put out some Status' for debug */
+  DALMAGO;
   vtpRocStatus(0);
+  DALMASTOP;
 
 }
 
@@ -379,6 +381,24 @@ rocReset()
   /* Disconnect the socket */
   vtpRocTcpConnect(0,0,0);
 
+}
+
+void
+rocLoad()
+{
+  int stat;
+  /* Open VTP library */
+  stat = vtpOpen(VTP_FPGA_OPEN | VTP_I2C_OPEN | VTP_SPI_OPEN);
+  if(stat < 0)
+    {
+      printf(" Unable to Open VTP driver library.\n");
+    }
+
+}
+
+void
+rocCleanup()
+{
   /* Close the VTP Library */
   vtpClose(VTP_FPGA_OPEN|VTP_I2C_OPEN|VTP_SPI_OPEN);
 }

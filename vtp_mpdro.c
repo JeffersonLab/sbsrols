@@ -12,15 +12,10 @@
 #include "mpdConfig.h"
 #include "vtpMpdConfig.h"
 
-extern pthread_mutex_t   vtpMutex;
-#define VLOCK     if(pthread_mutex_lock(&vtpMutex)<0) perror("pthread_mutex_lock");
-#define VUNLOCK   if(pthread_mutex_unlock(&vtpMutex)<0) perror("pthread_mutex_unlock");
-extern volatile ZYNC_REGS *vtp;
-
 /*
   Global to configure pedestal subtraction mode
       0 : subtraction mode DISABLED
-      1 : subtraction mode ENABLED 
+      1 : subtraction mode ENABLED
 
   Set with vtpSetPedSubtractionMode(int enable)
 */
@@ -28,37 +23,17 @@ int vtpPedSubtractionMode = 1;
 void vtpSetPedSubtractionMode(int enable); // routine prototype
 
 /* vtp defs */
-/* extern int vtpSoftReset(int id); */
 
 /*MPD Definitions*/
-extern uint32_t mpdRead32(volatile uint32_t * reg);
 extern int I2C_SendStop(int id);
 
 int fnMPD=0;
-int mpd_evt[22];
 
 extern volatile struct mpd_struct *MPDp[(MPD_MAX_BOARDS+1)]; /* pointers to MPD memory map */
 
 // End of MPD definition
 
-/* Buffer to store daLogMsg's */
-int dalma_rval, dalma_tot;
 
-#define DALMA_INIT {				\
-  dalma_tot = 0;				\
-  bufp = (char *) &(dalmabuffer[0]);		\
-  dalma_rval = sprintf (bufp,"\n");					\
-  if(dalma_rval > 0) {bufp += dalma_rval; dalma_tot += dalma_rval;}}
-
-#define DALMA_MSG(x...)	{						\
-  dalma_rval = sprintf(bufp, x);					\
-  if(dalma_rval > 0) {bufp += dalma_rval; dalma_tot += dalma_rval;}}
-
-#define DALMA_LOG {				\
-    if(dalma_tot > 1)				\
-      daLogMsg("INFO",dalmabuffer);}
-
-char *dalmabuffer;
 char *apvbuffer;
 char *bufp;
 
@@ -66,224 +41,25 @@ char *bufp;
 int
 vtpMpdDalogStatus(unsigned int fmask)
 {
-  MPDFIBER_REGS *mr;
-  int impd=0;
-
-  mr = (MPDFIBER_REGS *)malloc(32*sizeof(MPDFIBER_REGS));
-  printf("fmask = 0x%08x\n", fmask);
-
-  for(impd=0; impd<32; impd++)
-    {
-      mr[impd].gtx_ctrl   = vtp->v7.mpdFiber[impd].gtx_ctrl;
-      mr[impd].gtx_status = vtp->v7.mpdFiber[impd].gtx_status;
-      mr[impd].eb_ctrl = vtp->v7.mpdFiber[impd].eb_ctrl;
-    }
-
-  DALMA_INIT;
-
-  DALMA_MSG("\n");
-  DALMA_MSG("                           MPD Settings and Status\n\n");
-  DALMA_MSG("                  Channel  TX   ResetDone   -------ERRORS------     Event\n");
-  DALMA_MSG("MPD  Ctrl Status    Up    Lock   TX  RX     HARD   FRAME    CNT     Builder\n");
-  DALMA_MSG("--------------------------------------------------------------------------------\n");
-
-  for(impd=0; impd<32; impd++)
-    {
-      if( (impd % 8) == 0 )
-	{
-	  DALMA_LOG;
-	  DALMA_INIT;
-	}
-      if( (fmask & (1 << impd)) == 0) continue;
-
-      DALMA_MSG("%2d   ",impd);
-
-      DALMA_MSG("%04x   ",mr[impd].gtx_ctrl);
-
-      DALMA_MSG("%04x   ",mr[impd].gtx_status & 0xffff);
-
-      DALMA_MSG("%s     ",(mr[impd].gtx_status & MPD_GTX_STATUS_FIBER_CHANNEL_UP)?" UP ":"DOWN");
-
-      DALMA_MSG("%s     ",(mr[impd].gtx_status & MPD_GTX_STATUS_TX_LOCK)?"1":"0");
-
-      DALMA_MSG("%s   ",(mr[impd].gtx_status & MPD_GTX_STATUS_TX_RESETDONE)?"1":"0");
-
-      DALMA_MSG("%s      ",(mr[impd].gtx_status & MPD_GTX_STATUS_RX_RESETDONE)?"1":"0");
-
-      DALMA_MSG("%s     ",(mr[impd].gtx_status & MPD_GTX_STATUS_FIBER_HARD_ERR)?"ERR":"---");
-
-      DALMA_MSG("%s    ",(mr[impd].gtx_status & MPD_GTX_STATUS_FIBER_FRAME_ERR)?"ERR":"---");
-
-      if(mr[impd].gtx_status & MPD_GTX_STATUS_FIBER_ERR_CNT)
-	{
-	  DALMA_MSG("%3d     ",(mr[impd].gtx_status & MPD_GTX_STATUS_FIBER_FRAME_ERR)>>8);
-	}
-      else
-	DALMA_MSG("---     ");
-
-      DALMA_MSG("%s",(mr[impd].eb_ctrl & MPD_EBCTRL_ENABLE)?"ENABLED ":"DISABLED");
-
-      DALMA_MSG("\n");
-
-    }
-
-  DALMA_LOG;
-
-  if(mr)
-    free(mr);
-
-  return OK;
+  DALMAGO;
+  vtpMpdPrintStatus(fmask, 0);
+  DALMASTOP;
+  return 0;
 }
+
 
 void
 vtpPrintMPD_OB_STATUS(int dalogFlag)
 {
-  struct output_buffer_struct r;
-  int k;
-  int rval = 0;
-
-  DALMA_INIT;
-
-  DALMA_MSG("                              Output Buffer Status\n");
-  DALMA_MSG("           Event Builder\n");
-  DALMA_MSG("         OutFIFO   Full Flags       \n");
-  DALMA_MSG("Slot   nWrds  F E    O E C T   Blks    Events     Trigs    Missed  Incoming\n");
-  DALMA_MSG("--------------------------------------------------------------------------------\n");
-
-  for (k=0;k<fnMPD;k++) { // only active mpd set
-    r.evb_fifo_word_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.evb_fifo_word_count);
-    r.block_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.block_count);
-    r.event_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.event_count);
-    r.trigger_count = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.trigger_count);
-    r.missed_trigger = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.missed_trigger);
-    r.incoming_trigger = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.incoming_trigger);
-
-    if( (k % 8) == 0 )
-      {
-	DALMA_LOG;
-	DALMA_INIT;
-      }
-
-
-    DALMA_MSG(" %2d     ", mpdSlot(k));
-
-    DALMA_MSG("%4d  ",
-		    r.evb_fifo_word_count & 0xFFFF);
-
-    DALMA_MSG("%d %d    ",
-		    (r.evb_fifo_word_count & (1<<17) ? 1 : 0),
-		    (r.evb_fifo_word_count & (1<<16) ? 1 : 0));
-
-    DALMA_MSG("%d %d %d %d    ",
-		    (r.evb_fifo_word_count & (1<<27) ? 1 : 0),
-		    (r.evb_fifo_word_count & (1<<26) ? 1 : 0),
-		    (r.evb_fifo_word_count & (1<<25) ? 1 : 0),
-		    (r.evb_fifo_word_count & (1<<24) ? 1 : 0));
-
-    DALMA_MSG("%3d  ",
-		    r.block_count & 0xFF);
-
-    DALMA_MSG("%8d  ",
-		    r.event_count & 0xFFFFFF);
-
-    DALMA_MSG("%8d  ",
-		    r.trigger_count);
-
-    DALMA_MSG("%8d  ",
-		    r.missed_trigger);
-
-    DALMA_MSG("%8d",
-		    r.incoming_trigger);
-
-    DALMA_MSG("\n");
-
-  }
-
-  if(dalogFlag)
-    {
-      DALMA_LOG;
-    }
-  else
-    {
-      printf("%s",dalmabuffer);
-      printf("\n");
-    }
-
-
-  DALMA_INIT;
-
-  DALMA_MSG("       ---------------------- SDRAM --------------------   -- OBUF -    Latched\n");
-  DALMA_MSG("                  FIFO Addr                        Word         Word   APV  PROC\n");
-  DALMA_MSG("Slot          WR OK         RD OK     Overrun      Count   F E Count  Full  Full\n");
-  DALMA_MSG("--------------------------------------------------------------------------------\n");
-
-  for (k=0;k<fnMPD;k++) { // only active mpd set
-
-    r.sdram_flag_wc = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.sdram_flag_wc);
-    r.output_buffer_flag_wc = mpdRead32(&MPDp[mpdSlot(k)]->ob_status.output_buffer_flag_wc);
-
-    if( (k % 8) == 0 )
-      {
-	DALMA_LOG;
-	DALMA_INIT;
-      }
-
-    DALMA_MSG(" %2d    ", mpdSlot(k));
-
-    DALMA_MSG("0x%7x  %d  ",
-		    r.sdram_fifo_wr_addr & 0x1FFFFFF,
-		    (r.sdram_fifo_wr_addr & (1<<31)) ? 1 : 0
-		    );
-
-    DALMA_MSG("0x%7x  %d         ",
-		    r.sdram_fifo_rd_addr & 0x1FFFFFF,
-		    (r.sdram_fifo_rd_addr & (1<<31)) ? 1 : 0
-		    );
-
-    DALMA_MSG("%s  ",
-		    (r.sdram_flag_wc & (1<<31)) ? "YES" : " no"
-		    );
-
-    DALMA_MSG("0x%7x   ",
-		    r.sdram_flag_wc & 0x1FFFFFF
-		    );
-
-    DALMA_MSG("%d %d  %4d  ",
-		    (r.output_buffer_flag_wc & (1<<31) ) ? 1 : 0,
-		    (r.output_buffer_flag_wc & (1<<30) ) ? 1 : 0,
-		    r.output_buffer_flag_wc & 0x1FFF
-		    );
-
-    DALMA_MSG("0x%8x",
-		    r.latched_full
-		    );
-
-    DALMA_MSG("\n");
-  }
-
-  if(dalogFlag)
-    {
-      DALMA_LOG;
-    }
-  else
-    {
-      printf("%s",dalmabuffer);
-      printf("\n");
-    }
+  DALMAGO;
+  mpdGStatus(0);
+  DALMASTOP;
 }
+
+
 
 void vtp_mpd_setup()
 {
-  static int just_once = 0;
-  if( (just_once) > 0)
-    {
-      daLogMsg("INFO", " %d run%s since last vtp_mpd_setup\n",
-	       just_once, (just_once>1)?"s":"");
-      daLogMsg("INFO",apvbuffer);
-      just_once++;
-      return;
-    }
-
   /*****************
    *   VTP SETUP
    *****************/
@@ -383,7 +159,7 @@ void vtp_mpd_setup()
 	n = sscanf(line_ptr, "%10s %d %d %d", buf, &i1, &i2, &i3);
 	if( (n == 4) && !strcmp("APV", buf))
           {
-            cModeRocId = i1; 
+            cModeRocId = i1;
             fiberID = i2;
             apvId = i3;
             continue;
@@ -454,7 +230,6 @@ void vtp_mpd_setup()
 
   chanmask = mpdGetVTPFiberMask();
   mpdInitVTP(chanmask, MPD_INIT_FIBER_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK);
-  /* mpdInit(chanmask, 0,32,MPD_INIT_FIBER_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK); */
   fnMPD = mpdGetNumberMPD();
 
 
@@ -473,8 +248,6 @@ void vtp_mpd_setup()
     i = mpdSlot(k);
 
     int try_cnt = 0;
-
-    /* mpdHISTO_MemTest(i); */
 
   retry:
     error_status = OK;
@@ -619,11 +392,6 @@ void vtp_mpd_setup()
   int ifiber, id, iapv;
   for (ifiber = 0; ifiber < 32; ifiber++)
     {
-      if(ifiber == 16)
-	{
-	  daLogMsg("INFO",apvbuffer);
-	  bufp = (char *) &(apvbuffer[0]);
-	}
 
       id = ifiber;
 
@@ -709,19 +477,14 @@ void vtp_mpd_setup()
 		bufp += rval;
 	    }
 	}
-      /* else */
-      /* 	{ */
-      /* 	  rval = sprintf(bufp, */
-      /* 			 "  MPD %2d :                                INIT ERRORS\n", id); */
-      /* 	  if(rval > 0) */
-      /* 	    bufp += rval; */
-      /* 	} */
     }
   rval = sprintf(bufp, "\n");
   if(rval > 0)
     bufp += rval;
 
-  daLogMsg("INFO",apvbuffer);
+  DALMAGO;
+  printf("%s",apvbuffer);
+  DALMASTOP;
 
   if ((errSlotMask != 0) || (error_status != OK))
     daLogMsg("ERROR", "MPD initialization errors");
@@ -745,7 +508,6 @@ vtpMpdDownload()
     }
 #endif
 
-  dalmabuffer = (char *)malloc(1024*50*sizeof(char));
   apvbuffer = (char *)malloc(1024*50*sizeof(char));
 
   printf("rocDownload: User Download Executed\n");
@@ -796,10 +558,7 @@ vtpMpdGo()
     mpdDAQ_Enable(i);
 
     mpdTRIG_Enable(i);
-    mpd_evt[i]=0;
   }
-
-  vtpMpdDalogStatus(mpdGetVTPFiberMask());
 
 }
 
@@ -831,8 +590,6 @@ vtpMpdReset()
 void
 vtpMpdCleanup()
 {
-  if(dalmabuffer)
-    free(dalmabuffer);
 
   if(apvbuffer)
     free(apvbuffer);
