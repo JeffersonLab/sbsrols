@@ -22,7 +22,7 @@
 #define TI_ADDR  0 /* Auto initialize (search for TI by slot */
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x4A
+#define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
@@ -163,6 +163,9 @@ rocGo()
 #endif
 
   /* Enable/Set Block Level on modules, if needed, here */
+
+
+#ifdef TI_MASTER
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   printf("************************************************************\n");
   printf("%s: TI Configured for Internal Pulser Triggers\n",
@@ -170,7 +173,6 @@ rocGo()
   printf("************************************************************\n");
 #endif
 
-#ifdef TI_MASTER
   /* Example: How to start internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
