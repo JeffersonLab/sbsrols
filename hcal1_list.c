@@ -26,7 +26,10 @@
 #define MAX_EVENT_LENGTH   1024*60      /* Size in Bytes */
 
 /* TI_MASTER / TI_SLAVE defined in Makefile */
-
+#ifdef TI_SLAVE5
+#define TI_SLAVE
+#define TI_FLAG TI_INIT_SLAVE_FIBER_5
+#endif
 #ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
@@ -548,6 +551,6 @@ void readUserFlags()
 
 /*
   Local Variables:
-  compile-command: "make -k hcal1_list.so hcal1_slave_list.so"
+  compile-command: "make -k hcal1_list.so hcal1_slave5_list.so"
   End:
  */

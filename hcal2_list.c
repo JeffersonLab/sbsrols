@@ -32,6 +32,13 @@
 
 /* TI_MASTER / TI_SLAVE defined in Makefile */
 
+#ifdef TI_SLAVE5
+#define TI_SLAVE
+#define TI_FLAG TI_INIT_SLAVE_FIBER_5
+#endif
+
+
+
 #ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
@@ -68,9 +75,9 @@
 #ifdef ENABLE_FADC
 /* FADC Library Variables */
 extern int fadcA32Base, nfadc;
-#define NFADC     2
+#define NFADC     3
 /* Address of first fADC250 */
-#define FADC_ADDR (19<<19)
+#define FADC_ADDR (18<<19)
 /* Increment address to find next fADC250 */
 #define FADC_INCR (1<<19)
 
@@ -695,6 +702,6 @@ void readUserFlags()
 
 /*
   Local Variables:
-  compile-command: "make -k hcal2_list.so hcal2_slave_list.so"
+  compile-command: "make -k hcal2_slave_list.so hcal2_slave5_list.so"
   End:
  */

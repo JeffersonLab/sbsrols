@@ -18,7 +18,7 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= ti_list.so ti_slave_list.so
+VMEROL			= hcal1_list.so hcal1_slave5_list.so hcal2_slave_list.so hcal2_slave5_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
 ROLLIBS			= -lsd -lts -lfadc -lf1tdc -lhcal
 
@@ -91,6 +91,11 @@ test_list_v3.so: test_list_v3.c
 %slave_list.so: %list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+%slave5_list.so: %list.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE5 \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
 clean distclean:
