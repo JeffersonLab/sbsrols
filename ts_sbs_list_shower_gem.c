@@ -11,7 +11,7 @@
 /* Event Buffer definitions */
 #define MAX_EVENT_POOL     100
 #define MAX_EVENT_LENGTH   1152*32      /* Size in Bytes */
-
+#define AUTOSELECT
 /* Define maximum number of words in the event block
    MUST be less than MAX_EVENT_LENGTH/4   */
 #define MAX_WORDS 4000
@@ -33,7 +33,7 @@ extern int nTD;
 
 #define BLOCKLEVEL  1
 #define BUFFERLEVEL 4
-#define SYNC_INTERVAL 1000
+#define SYNC_INTERVAL 100
 
 /* Set to Zero to define a Front Panel Trigger source
    RANDOM_RATE defines the Pulser rate
@@ -45,7 +45,7 @@ extern int nTD;
      5     15.63kHz
      6      7.81kHz
      7      3.91kHz   */
-#define RANDOM_RATE  7
+#define RANDOM_RATE  5
 
 /*
   Global to configure the trigger source
@@ -102,15 +102,14 @@ rocDownload()
 
   /* Enable/Disable specific inputs */
   tsSetFPInput(0x7);
-  tsSetTriggerPrescale(2,1,0);
-  tsSetTriggerPrescale(2,0,0);
+  tsSetFPDelay(1,0);
   tsSetGTPInput(0x0);
 
   /* Set Time stamp format - 48 bits */
   tsSetEventFormat(3);
   /* tsSetGTPInputReadout(1);  /\* 1 enables output of GTP trigger word into trigger event*\/ */
   tsSetFPInputReadout(1);
-  
+
   /* Load the default trigger table */
   tsLoadTriggerTable();
 
@@ -120,8 +119,10 @@ rocDownload()
    *   Originals taken from GEM ti_master_list.so
    */
   // MPD 1 sample readout = 3.525 us = 8 * 480
+  
   tsSetTriggerHoldoff(1,30,1); /* 1 trigger in 20*480ns window */
   //tsSetTriggerHoldoff(1,60,1); /* 1 trigger in 20*480ns window */
+ tsSetTriggerHoldoff(1,60,1); /* 1 trigger in 20*480ns window */
   tsSetTriggerHoldoff(2,0,0);  /* 2 trigger in don't care window */
 
   tsSetTriggerHoldoff(3,0,0);  /* 3 trigger in don't care window */
@@ -206,6 +207,7 @@ rocGo()
 
   int ii, islot, tmask;
 
+#ifdef AUTOSELECT
   /* Enable TD module Ports that have indicated they are active */
   for (ii=0;ii<nTD;ii++) {
     tdResetSlaveConfig(tdID[ii]);
@@ -213,7 +215,14 @@ rocGo()
     printf("TD (Slot %d) Source Enable Mask = 0x%x\n",tdID[ii],tmask);
     if(tmask!=0) tdAddSlaveMask(tdID[ii],tmask);
   }
+#else
+  for (ii=0;ii<nTD;ii++) {
+    tdResetSlaveConfig(tdID[ii]);
+  }
+  tdAddSlave(20, 6); // bbshower6
+  tdAddSlave(20, 2); // bbgem19
 
+#endif
 
   tdGStatus(0);
 
