@@ -273,6 +273,7 @@ rocPrestart()
     HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
     hcalClkIn(HCAL_LED_C_STEP);
   } else {
+    printf("Pulser_enabled is *False*");
     hcalClkIn(0);
   }
 
@@ -377,7 +378,7 @@ rocTrigger(int arg)
     {
       dma_dabufp += dCnt;
     }
-
+  printf("****  Got event trigger  Printf WORKS *****  \n");
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
@@ -433,8 +434,8 @@ rocTrigger(int arg)
       int davail = tiBReady();
       if(davail > 0)
 	{
-	  printf("%s: ERROR: TI Data available (%d) after readout in SYNC event \n",
-		 __func__, davail);
+	  daLogMsg("ERROR","TI Data available (%d) after SYNC event \n",
+		   davail);
 
 	  while(tiBReady())
 	    {
@@ -449,8 +450,9 @@ rocTrigger(int arg)
 	  davail = faBready(faSlot(ifa));
 	  if(davail > 0)
 	    {
-	      printf("%s: ERROR: fADC250 Data available after readout in SYNC event \n",
-		     __func__);
+	      daLogMsg("ERROR",
+		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
+		       faSlot(ifa), davail);
 
 	      while(faBready(faSlot(ifa)))
 		{
@@ -531,8 +533,17 @@ void readUserFlags()
 
 #ifdef ENABLE_HCAL_PULSER
   /* Read the hcal pulser step info */
+  printf("********************************************/n");
+  printf("********************************************/n");
+  printf("********************************************/n");
+  printf("********************************************/n");
+  printf("********************************************/n");
+  printf("********************************************/n");
+    printf("flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);
   if(flag_pulserTriggerInput >= 0 && flag_pulserTriggerInput <6) {
     flag_PULSER_ENABLED = flag_prescale[flag_pulserTriggerInput];
+    printf("OK flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);
+    printf("flag_prescale[%d]=%d\n",flag_pulserTriggerInput,flag_prescale[flag_pulserTriggerInput]);
     if(flag_PULSER_ENABLED) {
       flag_LED_NSTEPS=getint("pulser_nsteps");
       char ptext[50];

@@ -455,7 +455,7 @@ void
 rocTrigger(int arg)
 {
   int ifa = 0, stat, nwords, dCnt;
-  unsigned int datascan, scanmask;
+  unsigned int datascan, scanmask,islot,nf1tdc;
   int roType = 2, roCount = 0, blockError = 0;
 
   roCount = tiGetIntCount();
@@ -605,8 +605,8 @@ rocTrigger(int arg)
       int davail = tiBReady();
       if(davail > 0)
 	{
-	  printf("%s: ERROR: TI Data available (%d) after readout in SYNC event \n",
-		 __func__, davail);
+	  daLogMsg("ERROR","TI Data available (%d) after SYNC event \n",
+		   davail);
 
 	  while(tiBReady())
 	    {
@@ -622,8 +622,9 @@ rocTrigger(int arg)
 	  davail = faBready(faSlot(ifa));
 	  if(davail > 0)
 	    {
-	      printf("%s: ERROR: fADC250 Data available after readout in SYNC event \n",
-		     __func__);
+	      daLogMsg("ERROR",
+		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
+		       faSlot(ifa), davail);
 
 	      while(faBready(faSlot(ifa)))
 		{
@@ -634,6 +635,37 @@ rocTrigger(int arg)
 
 #endif /* READOUT_FADC */
 #endif /* ENABLE_FADC */
+
+#ifdef ENABLE_F1
+#ifdef READOUT_F1
+      for(islot = 0; islot < NF1TDC; islot++)
+	{
+	  davail = f1Dready(f1Slot(islot));
+	  if(davail > 0)
+	    {
+	      daLogMsg("ERROR",
+		       "f1TDC (slot %d) Data available (%d) after SYNC event\n",
+		       f1Slot(islot), davail);
+	      while(f1Dready(f1Slot(islot)))
+		{
+		  vmeDmaFlush(f1GetA32(f1Slot(islot)));
+		}
+#ifdef OLDDMAFLUSH
+	      unsigned int trash[512];
+	      int timeout = 0;
+	      while(f1Dready(f1Slot(islot)))
+		{
+		  nwords = f1ReadEvent(f1Slot(islot),trash,512,0);
+		  printf("%s: dumped %d words\n", __func__, nwords);
+		  if((nwords < 0) || (timeout++ > 10))
+		    break;
+		}
+#endif
+
+	    }
+	}
+#endif /* READOUT_F1 */
+#endif /* ENABLE_F1 */
 
     }
 

@@ -38,7 +38,8 @@
 */
 /* Define some common keywords as symbols, so we have just one place to
    change them*/
-#define FLAG_FILE "ffile"
+#define FLAG_FILE "file.flags"
+/*#define FLAG_FILE "ffile"*/
 #define COMMENT_CHAR ';'
 
 
@@ -160,6 +161,7 @@ void init_strings()
 #endif
 
   ffile_name = getstr(FLAG_FILE);
+  printf("About to try to open  %s\n",FLAG_FILE);
 /* check that filename exists */
   fd = fopen(ffile_name,"r");
   if(!fd) {
