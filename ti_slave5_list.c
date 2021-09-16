@@ -26,7 +26,7 @@
 #define TI_ADDR  0
 
 /* Define port 5 as the Slave port */
-#define TI_FLAG TI_INIT_SLAVE_FIBER_5
+#define TI_FLAG (TI_INIT_SLAVE_FIBER_5|TI_INIT_SKIP_FIRMWARE_CHECK)
 
 /* Measured longest fiber length in system */
 #define FIBER_LATENCY_OFFSET 0x50

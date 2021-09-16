@@ -1,80 +1,62 @@
 /*************************************************************************
  *
- *  fadc_lhrs.c -     Library of routines for readout and buffering of
+ * fadc_lhrs.c -- readout of VXS crate on L-HRS for the SBS era
+ * 
+ * Version 1, Sept 2021, R. Michaels
+ *
+ * it was copied from ...
+ *
+ *  ti_slave5_list.c - Library of routines for readout and buffering of
  *                    events using a JLAB Trigger Interface V3 (TI) with
  *                    a Linux VME controller in CODA 3.0.
  *
- *              original
  *                    This is for a TI in Slave Mode using fiber port
  *                    5 controlled by a Master TI or Trigger
  *                    Supervisor
  *
- *              standalone: it becomes a standalone master readout
- *                 if the flag STANDALONE is set
- *
- *  This readout list was a merging of the ti_slave5_list and the
- *  "adev" version of fadc_lhrs taken on Sept 11, 2021.  
- *  As I write this it does not have the helicity scaler yet,
- *  but it will be added in revisions.  We also need to add
- *  the bridge connection to the fastbus crates.
- *
- * Revisions:
- *  
  */
 
-/* uncomment to run standalone.  comment out to run with TS.  */
-#define STANDALONE 1
-
 /* Event Buffer definitions */
-#define MAX_EVENT_POOL     10
-#define MAX_EVENT_LENGTH   1024*64      /* Size in Bytes */
+#define MAX_EVENT_POOL     100
+#define MAX_EVENT_LENGTH   1024*40      /* Size in Bytes */
 
 /* Number of data words in the event */
 #define MAX_WORDS   2700
 
 /* Define TI Type (TI_MASTER or TI_SLAVE) */
-#ifdef STANDALONE
-#define TI_MASTER
-#else
-///////#define TI_SLAVE
-#endif
+#define TI_SLAVE
 /* TS Fiber Link trigger source (from TI Master, TD, or TS), POLL for available data */
-#ifdef STANDALONE
 #define TI_READOUT TI_READOUT_TS_POLL
-#else
-/* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
-#define TI_READOUT TI_READOUT_EXT_POLL
-#endif
 /* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
 #define TI_ADDR  0
 
-#ifndef STANDALONE
 /* Define port 5 as the Slave port */
-#define TI_FLAG TI_INIT_SLAVE_FIBER_5
-#endif
+#define TI_FLAG (TI_INIT_SLAVE_FIBER_5|TI_INIT_SKIP_FIRMWARE_CHECK)
 
 /* Measured longest fiber length in system */
 #define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
-
 #include "sdLib.h"
-#include "usrstrutils.c"
+#include "fadcLib.h"
+#include "fadc250Config.h"
 
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
-/* using the 3.10_arm_lib to be compatible with Tritium-era software */
-#include "/home/sbs-onl/bob/3.10_arm_lib/fadcLib.h"
-#include "fadc250Config.h"
+#include "usrstrutils.c" // utils to pick up CODA ROC config parameter line
 
-/* Define initial buffering level.  Blocklevel is defined further below. */
+/* Define block level */
+unsigned int BLOCKLEVEL = 1;
+/* Define buffering level */
 int BUFFERLEVEL=1;
+
 
 /* FADC Defaults/Globals */
 #define FADC_DAC_LEVEL    3100 //was 3100
 #define FADC_WINDOW_WIDTH 100 //
-#define FADC_MODE          9  // 
+/* using hall B firmware, MODE = 1=waveform.  7=pulse integral */
+#define FADC_MODE          1  
 
 #define FADC_LATENCY       195 // 
 #define FADC_NSB            7 // # of samples *before* Threshold crossing (TC) to include in sum
@@ -86,7 +68,8 @@ extern int fadcA32Base;
 extern int nfadc;
 extern unsigned int fadcAddrList[FA_MAX_BOARDS];   
 
-#define NFADC 9
+// start with 1 FADC slot 14.  bpm/raster/helicity FADC
+#define NFADC 1
 /* Address of first fADC250 */
 /* slot .... do not use slot 2, see halog 3881921
         3 = 0x180000
@@ -121,23 +104,6 @@ unsigned int MAXFADCWORDS=0;
 
 unsigned int fadc_window_lat=FADC_LATENCY, fadc_window_width=FADC_WINDOW_WIDTH;
 
-/*
-  Global to configure the trigger source
-      0 : tsinputs or FPTRG
-      1 : TI random pulser
-      2 : TI fixed pulser
-
-  Set with rocSetTriggerSource(int source);
-*/
-int rocTriggerSource = 2;
-void rocSetTriggerSource(int source); // routine prototype
-
-/*
-
-  Read the user flags/configuration file.
-
-*/
-
 
 
 /****************************************
@@ -146,7 +112,11 @@ void rocSetTriggerSource(int source); // routine prototype
 void
 rocDownload()
 {
-  int ifa,iFlag,stat;
+  int stat;
+  int iFlag, ifa,res, ichan1;
+
+
+  UINT32 addr,laddr;
 
   /* Setup Address and data modes for DMA transfers
    *
@@ -157,96 +127,24 @@ rocDownload()
    *  sstMode  = 0 (SST160) 1 (SST267) 2 (SST320)
    */
 
-  /* test the flags */
-#ifdef STANDALONE
-  printf("********************* STANDALONE  **************** \n");
-#endif
-
-#ifdef TI_MASTER
-  printf("********************* MASTER  **************** \n");
-#endif
-
-#ifdef TI_SLAVE
-  printf("********************* SLAVE  **************** \n");
-#endif
-
-  printf("TI_READOUT thing %d \n",TI_READOUT);
-  printf("TI_FLAG thing %d \n",TI_FLAG);
-
   init_strings();
   buffered = getflag(BUFFERED);
   if (!buffered) BUFFERLEVEL=1 ;
   printf ("Buffer flag : %d\n",buffered);
 
+  /* Define BLock Level */
+  blockLevel = BLOCKLEVEL;
+
+
   vmeDmaConfig(2,5,1);
 
   /* Define BLock Level variable to a default */
-  blockLevel = 1;
+  blockLevel = BLOCKLEVEL;
 
 
   /*****************
    *   TI SETUP
    *****************/
-
-
-#ifdef STANDALONE
-
-/* Normally using a front panel triger if STANDALONE
-   In theory should set rocTriggerSource=1   */
-
-
-#ifdef TI_MASTER
-
-  printf("TI_MASTER ... Standalone running with FPTRG.\n");
-  if(rocTriggerSource != 0) printf("Actually using PULSER for now \n");
-
-  if(TIPRIMARYflag == 1)
-    {
-      printf("WARNING: Trigger Source already enabled. \n");
-    }
-  else
-    {
-      /* rocTriggerSource is a global */
-      if(rocTriggerSource == 0)
-	{
-   /*	  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); *//* TS Inputs enabled */
-	  tiSetTriggerSource(TI_TRIGGER_FPTRG); /* Front panel trigger */
-	}
-      else
-	{
-	  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
-	}
-
-      daLogMsg("INFO","Setting trigger source (%d)", rocTriggerSource);
-    }
-#else
-   printf("WARNING: TI is not Master.  It is a Slave. \n");
-#endif
-
-  /* Enable set specific TS input bits (1-6) */
-          tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
-
-  /* Load the trigger table that associates
-   *  pins 21/22 | 23/24 | 25/26 : trigger1
-   *  pins 29/30 | 31/32 | 33/34 : trigger2
-   */
-  tiLoadTriggerTable(0);
-
-  tiSetTriggerHoldoff(1,10,0);
-  tiSetTriggerHoldoff(2,10,0);
-
-  /* Set initial number of events per block */
-  tiSetBlockLevel(blockLevel);
-
-  /* Set Trigger Buffer Level */
-  tiSetBlockBufferLevel(BUFFERLEVEL);
-
-#endif
-
-  // Added by Maria to test delays March 17 2021
-  // tiSetTriggerPulse(1,25,3,0);
-
-  tiStatus(0);
 
   /* Init the SD library so we can get status info */
   stat = sdInit(0);
@@ -256,9 +154,22 @@ rocDownload()
       sdStatus(0);
     }
 
+  tiStatus(0);
+
+  printf("rocDownload: User Download Executed\n");
+
+
+  /*****************
+   *   FADC SETUP
+   *****************/
+
+  //Added by Maria to test delays March 17 2021
+  // tiSetTriggerPulse(1,25,3,0);
+
 /* load thresholds (= pedestals + an offset) from a file */
 
-/* initialize to 1 first; indices 0 - NFADC correspond to min-max slot addresses */
+/* initialize to 1 first; indices 0 - NFADC 
+     correspond to min-max slot addresses */
   for (islot=0; islot<NFADC; islot++ ) {
     for (ichan=0; ichan<16; ichan++) {
       bthresh[16*islot+ichan] = 1;  /* default threshold */
@@ -294,6 +205,7 @@ rocDownload()
   /*******************
    *   FADC250 SETUP
    *******************/
+  fadcA32Base=0x09000000;
   iFlag = 0;
   iFlag |= FA_INIT_EXT_SYNCRESET; /* External (VXS) SyncReset*/
   iFlag |= FA_INIT_VXS_TRIG;      /* VXS Input Trigger */
@@ -304,12 +216,14 @@ rocDownload()
 
 /* Build the list of slots.  This is needed because we skip to slot 14 at the end */
 
-  for (ifa = 0; ifa<8; ifa++) {
-     fadcAddrList[ifa] = FADC_ADDR +ifa*FADC_INCR;
-  }
-  fadcAddrList[8] = 0x700000;  // 9th ADC in slot 14
+// start with 1 FADC slot 14
 
-  for (ifa=0; ifa<9; ifa++) {
+/*  for (ifa = 0; ifa<8; ifa++) {
+     fadcAddrList[ifa] = FADC_ADDR +ifa*FADC_INCR;
+     } */
+  fadcAddrList[0] = 0x700000;  // BPM/raster/helicity FADC in slot 14
+
+  for (ifa=0; ifa<NFADC; ifa++) {
     printf("fadc addr[%d]=0x%x \n",ifa,fadcAddrList[ifa]);
 
   }
@@ -320,7 +234,7 @@ rocDownload()
 
   /* FADC firmware used */
   /* ctrl   proc   */
-  /* 0x0252 0x0c12 */
+  /* 0x02b3 0x1b05 */
 
   if(nfadc>1)
     faEnableMultiBlock(1);
@@ -340,8 +254,10 @@ rocDownload()
       /* Set the threshold for data readout */
       for (ichan=0; ichan<16; ichan++) {
 	bmask=(1<<ichan);
-        faSetThreshold(faSlot(ifa), bthresh[16*ifa+ichan], bmask);
-         printf(" %d ",bthresh[16*islot+ichan]);
+	/*        faSetThreshold(faSlot(ifa), bthresh[16*ifa+ichan], bmask);
+		  printf(" %d ",bthresh[16*islot+ichan]); */
+	/*        faSetThreshold(faSlot(ifa), 1, bmask); */
+	/*       printf(" %d ",bthresh[16*islot+ichan]);*/
       }
 
 /**********************************************************************************
@@ -358,6 +274,7 @@ rocDownload()
 *   NSB : Number of samples before pulse over threshold
 *   NSA : Number of samples after pulse over threshold
 *    NP : Number of pulses processed per window
+* the last 3 are deprecated -- hall B software
 *  NPED : Number of samples to sum for pedestal
 *MAXPED : Maximum value of sample to be included in pedestal sum
 *  NSAT : Number of consecutive samples over threshold for valid pulse
@@ -370,9 +287,7 @@ rocDownload()
 		    FADC_NSB,   /* NSB */
 		    FADC_NSA,   /* NSA */
 		    4,   /* NP */
-		    4,   /* NPED */
-		    320, /* MAXPED */
-		    2);  /* NSAT */
+		   0);
  
 
   } /* loop over slots of FADC */
@@ -381,9 +296,9 @@ rocDownload()
 
 
 
-  printf("rocDownload: User Download Executed\n");
 
 }
+
 
 /****************************************
  *  PRESTART
@@ -392,19 +307,19 @@ void
 rocPrestart()
 {
 
-  int ifa;
+   int ifa;
 
   /* Program/Init VME Modules Here */
   for(ifa=0;ifa<nfadc;ifa++)
     {
-      faEnableSyncSrc(faSlot(ifa));
+      /* undefined in this version :
+                faEnableSyncSrc(faSlot(ifa));*/
       faSoftReset(faSlot(ifa),0);
       faResetToken(faSlot(ifa));
       faResetTriggerCount(faSlot(ifa));
     }
 
 
-  tiStatus(0);
 
   /* EXAMPLE: User bank of banks added to prestart event */
   UEOPEN(500,BT_BANK,0);
@@ -418,7 +333,12 @@ rocPrestart()
 
   UECLOSE;
 
+  DALMAGO;
+  tiStatus(0);
+  DALMASTOP;
+
   printf("PreStart: FADC setup parameters mode %d  latency %d  window %d \n",FADC_MODE, FADC_LATENCY,FADC_WINDOW_WIDTH);
+
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -442,6 +362,15 @@ rocGo()
   blockLevel = tiGetCurrentBlockLevel();
   bufferLevel = tiGetBroadcastBlockBufferLevel();
   printf("rocGo: Block Level set to %d  Buffer Level set to %d\n",blockLevel,bufferLevel);
+
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+  tiUseBroadcastBufferLevel(1);
+
+  /* Enable/Set Block Level on modules, if needed, here */
+
+
+ faGSetBlockLevel(blockLevel);
+
   /* Get the FADC mode and window size to determine max data size */
   /* I think this is in the hall B lib which I don't have yet */
   /*  faGetProcMode(faSlot(0), &fadc_mode, &pl, &ptw,
@@ -463,12 +392,6 @@ rocGo()
 
   faGEnable(0, 0); 
 
-
-  /* In case of slave, set TI busy to be enabled for full buffer level */
-  tiUseBroadcastBufferLevel(1);
-
-  /* Enable/Set Block Level on modules, if needed, here */
-
 }
 
 /****************************************
@@ -482,8 +405,9 @@ rocEnd()
   faGStatus(0);
   sdStatus(1);
 
-
+  DALMAGO;
   tiStatus(0);
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -495,8 +419,10 @@ rocEnd()
 void
 rocTrigger(int evntno)
 {
-  int ii, ifa, nwords;
+  int ii;
   int stat, dCnt, idata;
+  int ev_type = 0;
+  int ifa, nwords;
   int roCount = 0, blockError = 0;
   int rval = OK;
   int sync_flag = 0, late_fail = 0;
@@ -507,14 +433,9 @@ rocTrigger(int evntno)
   int islot;
   int errFlag = 0;
 
+
   /* Set TI output 1 high for diagnostics */
   tiSetOutputPort(1,0,0,0);
-
-  /* Check if this is a Sync Event */
-  stat = tiGetSyncEventFlag();
-  if(stat) {
-    printf("rocTrigger: Got Sync Event!! Block # = %d\n",evntno);
-  }
 
   /* Readout the trigger block from the TI
      Trigger Block MUST be readout first */
@@ -541,18 +462,8 @@ rocTrigger(int evntno)
   }
   BANKCLOSE;
 
-  /* Check for sync Event */
-  if(tiGetSyncEventFlag()) {
-    /* Set new block level if it has changed */
-    idata = tiGetCurrentBlockLevel();
-    if((idata != blockLevel)&&(idata<255)) {
-      blockLevel = idata;
-      printf("rocTrigger: Block Level changed to %d\n",blockLevel);
-    }
-
-    /* Clear/Update Modules here */
-
-  }
+  for(ii=0; ii< 800; ii++)
+    tiGetBlockLimit();
 
  /* fADC250 Readout */
   BANKOPEN(250,BT_UI4,blockLevel);
@@ -595,19 +506,6 @@ rocTrigger(int evntno)
 	     roCount, datascan, scanmask);
     }
 
-  BANKCLOSE;
-
-
- BANKOPEN(0xfabc,BT_UI4,0);		//Sync checks
-  event_cnt = event_cnt + 1;
-  icnt = icnt + 1;
-  if(icnt > 20000) icnt = 0;
-  *dma_dabufp++ = LSWAP(0xfabc0004);
-  *dma_dabufp++ = LSWAP(event_ty);
-  *dma_dabufp++ = LSWAP(event_cnt);
-  *dma_dabufp++ = LSWAP(icnt);
-  *dma_dabufp++ = LSWAP(syncFlag);
-  *dma_dabufp++ = LSWAP(0xfaaa0001);
   BANKCLOSE;
 
   if(tiGetSyncEventFlag() == 1|| !buffered)
@@ -660,8 +558,8 @@ rocTrigger(int evntno)
 	      int davail = faBready(faSlot(islot));
 	      if(davail > 0)
 		{
-		  printf("%s: ERROR: fADC250 Data available (%d) after readout in SYNC event\n",
-			 __func__, davail);
+		  printf("%s: ERROR: fADC250 Data available (%d) after readout in SYNC event \n", __func__, davail);
+
 		  while(faBready(faSlot(islot)))
 		    {
 		      vmeDmaFlush(faGetA32(faSlot(islot)));
@@ -672,6 +570,8 @@ rocTrigger(int evntno)
 	}
 
     } /* if(tiGetSyncEventFlag() == 1|| !buffered) */
+
+
 
 
   /* Set TI output 0 low */
@@ -691,6 +591,7 @@ rocCleanup()
   printf("%s: Reset all Modules\n",__FUNCTION__);
   dalmaClose();
 
+  printf("%s: Reset all FADCs\n",__FUNCTION__);
+  faGReset(1);
+
 }
-
-
