@@ -1,6 +1,6 @@
 /*************************************************************************
  *
- *  ts_sbslist.c - Library of routines for readout and buffering of
+ *  ts_sbs_list.c - Library of routines for readout and buffering of
  *                events using a JLAB Pipeline Trigger Supervisor (TS) with
  *                a Linux VME controller in CODA 3.0
  *
@@ -31,8 +31,13 @@ extern int nTD;
 #include "sdLib.h"
 #include "tdLib.h"
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
+#include "usrstrutils.c"
+
 #define BLOCKLEVEL  1
-#define BUFFERLEVEL 4
+#define BUFFERLEVEL 1
 #define SYNC_INTERVAL 1000
 
 /* Set to Zero to define a Front Panel Trigger source
@@ -61,6 +66,176 @@ void rocSetTriggerSource(int source); // routine prototype
 /* Global Flag for debug printing */
 int usrDebugFlag=0;
 
+/*
+  Hardcode ROC names to their TD ports
+  -- someday (tm) read them in with a config file - BM 10sept21
+*/
+typedef struct
+{
+  int enable;
+  int slot;
+  int port;
+  int arm;
+  char rocname[64];
+} TD_SLAVE_MAP;
+
+enum sbsARMS
+  {
+   armHCAL = 0,
+   armLHRS,
+   armBIGBITE,
+   nArms
+  };
+
+char *armNames[nArms] =
+  {
+   "HCAL",
+   "LHRS",
+   "BIGBITE"
+  };
+
+enum sbsSlaves
+  {
+   nhcalROC16 = 0,
+   nhcalROC17,
+   nlhrsROC10,
+   nbbgemROC19,
+   ngrinchROC7,
+   nbbshowerROC6,
+   nbbhodoROC5,
+   nSlaves
+  };
+
+TD_SLAVE_MAP tdSlaveConfig[nSlaves] =
+  {
+   { 0,  19,   1,  armHCAL,  "hcalROC16"},
+   { 0,  19,   4,  armHCAL,  "hcalROC17"},
+   { 0,  19,   8,  armLHRS,  "lhrsROC10"},
+   { 0,  20,   2,  armBIGBITE, "bbgemROC19"},
+   { 0,  20,   3,  armBIGBITE, "grinchROC7"},
+   { 0,  20,   6,  armBIGBITE, "bbshowerROC6"},
+   { 0,  20,   7,  armBIGBITE, "bbhodoROC5"}
+  };
+
+
+/*
+  Read the user flags/configuration file.
+  10sept21 - BM
+    - Support for
+      all,
+      HCAL, LHRS, BIGBITE
+      ROCs listed in tdSlaveConfig
+*/
+void
+readUserFlags()
+{
+  int flag = 0, flagval = 0;
+  int i;
+
+  printf("%s: Reading user flags file.",
+	 __func__);
+  init_strings();
+
+  /* Order of operations..
+     - check 'all'
+     - check 'arm'
+     - check 'rocname'
+  */
+
+  /* enable 'all', 'all=1'
+     disable 'all=0'
+     pass the entire flag, if specified for future non-binary flag support.
+  */
+
+  flagval = 0;
+  flag = getflag("all");
+
+  if(flag)
+    {
+      flagval = 1;
+
+      if(flag > 1)
+	flagval = getint("all");
+
+      for(i = 0; i < nSlaves; i++)
+	tdSlaveConfig[i].enable = flagval;
+    }
+
+  /* enable 'BIGBITE', 'BIGBITE=1'
+     disable 'BIGBITE=0'
+     similar for 'LHRS' and 'HCAL'
+  */
+  int iarm=0;
+  for(iarm = 0; iarm < nArms; iarm++)
+    {
+      flagval = 0;
+      flag = getflag(armNames[iarm]);
+
+      if(flag)
+	{
+	  flagval = 1;
+
+	  if(flag > 1)
+	    flagval = getint(armNames[iarm]);
+
+	  for(i = 0; i < nSlaves; i++)
+	    {
+	      if(tdSlaveConfig[i].arm == iarm)
+		tdSlaveConfig[i].enable = flagval;
+	    }
+	}
+    }
+
+  /* enable 'bbshowerROC6', 'bbshowerROC6=1'
+     disable 'bbshowerROC6=0'
+     similar for the rest of the crates
+  */
+  int islave=0;
+  for(islave = 0; islave < nSlaves; islave++)
+    {
+      flagval = 0;
+      flag = getflag(tdSlaveConfig[islave].rocname);
+
+      if(flag)
+	{
+	  flagval = 1;
+
+	  if(flag > 1)
+	    flagval = getint(tdSlaveConfig[islave].rocname);
+
+	  tdSlaveConfig[islave].enable = flagval;
+	}
+    }
+
+  /* Print config */
+  printf("%s\n TD Slave Config from usrstringutils\n",
+	 __func__);
+  printf("  Enable      Slot      Port       Arm       Roc\n");
+  printf("---------|---------|---------|---------|---------|---------|\n");
+
+  for(islave = 0; islave < nSlaves; islave++)
+    {
+      printf("       %d  ",
+	     tdSlaveConfig[islave].enable);
+
+      printf("      %2d ",
+	     tdSlaveConfig[islave].slot);
+
+      printf("       %d  ",
+	     tdSlaveConfig[islave].port);
+
+      printf(" %-10s",
+	     armNames[tdSlaveConfig[islave].arm]);
+
+      printf(" %-20s",
+	     tdSlaveConfig[islave].rocname);
+
+      printf("\n");
+    }
+
+  printf("\n");
+
+}
 
 /* function prototype */
 void rocTrigger(int arg);
@@ -110,7 +285,7 @@ rocDownload()
   tsSetEventFormat(3);
   /* tsSetGTPInputReadout(1);  /\* 1 enables output of GTP trigger word into trigger event*\/ */
   tsSetFPInputReadout(1);
-  
+
   /* Load the default trigger table */
   tsLoadTriggerTable();
 
@@ -156,6 +331,7 @@ rocDownload()
   /* Reset Active ROC Masks on all TD modules */
   tsTriggerReadyReset();
 
+  readUserFlags();
 
 /*   tsSetPrescale(0); */
 
@@ -190,8 +366,10 @@ rocPrestart()
   printf("rocPrestart: Set Sync interval to %d Blocks\n",ival);
 
   /* Print Status info */
+  DALMAGO;
   tdGStatus(0);
   tsStatus(0);
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -206,22 +384,42 @@ rocGo()
 
   int ii, islot, tmask;
 
-  /* Enable TD module Ports that have indicated they are active */
+  /* Reset all TD slave configurations */
   for (ii=0;ii<nTD;ii++) {
     tdResetSlaveConfig(tdID[ii]);
-    tmask = tdGetTrigSrcEnabledFiberMask(tdID[ii]);
-    printf("TD (Slot %d) Source Enable Mask = 0x%x\n",tdID[ii],tmask);
-    if(tmask!=0) tdAddSlaveMask(tdID[ii],tmask);
   }
 
+  /* Enable TD module ports that have been flaged from usrstringutils */
+  int stringEnabled = 0;
+  for(ii = 0; ii < nSlaves; ii++)
+    {
+      if(tdSlaveConfig[ii].enable)
+	{
+	  tdAddSlave(tdSlaveConfig[ii].slot,
+		     tdSlaveConfig[ii].port);
+	  stringEnabled=1;
+	}
+    }
 
+  /* If none were enabled with usrstringutils, assume the auto method is preferred */
+  if(!stringEnabled)
+    {
+      /* Enable TD module Ports that have indicated they are active */
+      for (ii=0;ii<nTD;ii++) {
+	tmask = tdGetTrigSrcEnabledFiberMask(tdID[ii]);
+	printf("TD (Slot %d) Source Enable Mask = 0x%x\n",tdID[ii],tmask);
+	if(tmask!=0) tdAddSlaveMask(tdID[ii],tmask);
+      }
+
+    }
+
+  DALMAGO;
   tdGStatus(0);
+  tsStatus(0);
+  DALMASTOP;
 
   usrDebugFlag=0;
 
-
-  /* Enable modules, if needed, here */
-  tsStatus(0);
 
   if(rocTriggerSource != 0)
     {
@@ -270,7 +468,10 @@ rocEnd()
       tsSoftTrig(1,0,100,0);
     }
 
+  DALMAGO;
+  tdGStatus(0);
   tsStatus(0);
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tsGetIntCount());
 
@@ -357,10 +558,22 @@ rocSetTriggerSource(int source)
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
+void
 rocCleanup()
 {
   int islot=0;
 
+  /* Reset all TD slave configurations */
+  for (islot=0;islot<nTD;islot++) {
+    tdResetSlaveConfig(tdID[islot]);
+  }
+
+  dalmaClose();
 }
 
 /*

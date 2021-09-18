@@ -119,7 +119,7 @@ rocDownload()
    *   Originals taken from GEM ti_master_list.so
    */
   // MPD 1 sample readout = 3.525 us = 8 * 480
-  
+
   tsSetTriggerHoldoff(1,30,1); /* 1 trigger in 20*480ns window */
   //tsSetTriggerHoldoff(1,60,1); /* 1 trigger in 20*480ns window */
  tsSetTriggerHoldoff(1,60,1); /* 1 trigger in 20*480ns window */
@@ -366,6 +366,12 @@ rocSetTriggerSource(int source)
 }
 
 void
+rocLoad()
+{
+
+}
+
+void
 rocCleanup()
 {
   int islot=0;
@@ -374,6 +380,6 @@ rocCleanup()
 
 /*
   Local Variables:
-  compile-command: "make ts_sbs_list.so"
+  compile-command: "make ts_sbs_list_shower_gem.so"
   End:
  */
