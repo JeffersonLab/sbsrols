@@ -7,10 +7,14 @@
  *
  */
 #define VTP
+#include <errno.h>
 #include "vtp.h"
 #include "mpdLib.h"
 #include "mpdConfig.h"
 #include "vtpMpdConfig.h"
+
+#define PEDESTAL_FILENAME    "/home/sbs-onl/cfg/CommonModeRange_220.txt"
+#define COMMON_MODE_FILENAME "/home/sbs-onl/cfg/gem_ped_220.dat"
 
 /*
   Global to configure pedestal subtraction mode
@@ -19,7 +23,7 @@
 
   Set with vtpSetPedSubtractionMode(int enable)
 */
-int vtpPedSubtractionMode = 1;
+int vtpPedSubtractionMode = 0;
 void vtpSetPedSubtractionMode(int enable); // routine prototype
 
 /* vtp defs */
@@ -92,37 +96,50 @@ void vtp_mpd_setup()
     ++vtpFiberBit;
   }
 
-
-  int build_all_samples = 0;
+  int build_all_samples = 1;
   //1 => For pedestal run, will write ADC samples from the APV (i.e. disable zero suppression)
   //0 => will apply the threshold and peak position logic to decide if data is written to the event (i.e. zero suppression enabled)
 
-  int build_debug_headers = 0;
+  int build_debug_headers = 1;
   //1 => will write extra debugging info headers about the common-mode processing (which APV chip reported data, avg A/B values and counts for each APV)
   //0 => disables extra debug info headers
-  int enable_cm = 1;
+  int enable_cm = 0;
   //1 => enables the common-mode subtraction logic
   //0 => disables the common-mode subtraction logic (so raw ADC samples only have the channel offset applied)
-  int noprocessing_prescale = 100;
+  int noprocessing_prescale = 9;
   //0 => prescaling disabled (all events are processed)
   //1-65535 => every Nth event has common-mode subtract and zero suppression disabled
+  int allow_peak_any_time = 1;
+  //0 => strip ADC peak sample must be neither first or last sample
+  //1 => strip ADC peak sample can be at any time sample
+  int min_avg_samples = 20;
+  //minimum number of samples for a single APV frame that must fall within pedestal averaging region for common-mode to be applied. If less than this number are found in average, then common-mode will be disabled for that APV for all time ssamples of that event and a flag will be reported indicating this so offline can know it needs to perform the correction.
 
   vtpMpdEbSetFlags(build_all_samples, build_debug_headers,
-		   enable_cm, noprocessing_prescale);
+		   enable_cm, noprocessing_prescale, allow_peak_any_time,
+                   min_avg_samples);
 
   //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
   int apvId, cModeMin, cModeMax, cModeRocId;
   int fiberID = -1, last_mpdSlot = -1;
-  //FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange.txt","r");
-  //FILE *fcommon   = NULL;
-  FILE *fcommon   = fopen("/home/sbs-onl/cfg/CommonModeRange_220.txt","r");
+  FILE *fcommon   = fopen(COMMON_MODE_FILENAME,"r");
+
+
+
+  if(fcommon == NULL)
+    {
+      perror("fopen");
+      daLogMsg("ERROR","Failed to open GEM CommonModeRange file");
+    }
 
   //valid pedestal file => will load APV offset file and subtract from APV samples
-  //NULL => will load 0's for all APV offsets
-  //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal.txt","r");
-  //FILE *fpedestal = fopen("/home/sbs-onl/cfg/pedestal_test.txt","r");    //Test file with offset set to -1000 in fiber 15, apv 11, channel 10
-  FILE *fpedestal = fopen("/home/sbs-onl/cfg/gem_ped_220.dat","r");//all GEMs
-  //FILE *fpedestal = NULL;
+  FILE *fpedestal = fopen(PEDESTAL_FILENAME,"r");//all GEMs
+
+  if(fpedestal == NULL)
+    {
+      perror("fopen");
+      daLogMsg("ERROR","Failed to open GEM Pedestal file");
+    }
 
   // Load pedestal & threshold file settings
   int stripNo;
@@ -168,10 +185,13 @@ void vtp_mpd_setup()
 
 	n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
 
-      	// TODO: need to replace vtpRocId with the ROC ID for this VTP to see if settings are for us
-        //if(cModeRocId != vtpRocId)
-	//  continue;
-	//
+        // if settings are for us
+        if(cModeRocId != ROCID)
+        {
+          printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+          continue;
+        }
+
 	if(n == 3)
           {
 	    //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
@@ -195,9 +215,12 @@ void vtp_mpd_setup()
       //	  cModeMin = 0;
       //	  cModeMax = 4095;
 
-      // TODO: need to replace vtpRocId with the ROC ID for this VTP to see if settings are for us
-      //if(cModeRocId != vtpRocId)
-      //  continue;
+      // if settings are for us
+      if(cModeRocId != ROCID)
+      {
+        printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+        continue;
+      }
 
       vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
     }
@@ -490,6 +513,12 @@ void vtp_mpd_setup()
     daLogMsg("ERROR", "MPD initialization errors");
 }
 
+void
+vtpMpdApvConfigStatus()
+{
+  printf("%s",apvbuffer);
+}
+
 /****************************************
  *  DOWNLOAD
  ****************************************/
@@ -560,6 +589,11 @@ vtpMpdGo()
     mpdTRIG_Enable(i);
   }
 
+  DALMAGO;
+  printf("vtpPedSubtractionMode = %d\n", vtpPedSubtractionMode);
+  printf("MPD PEDESTAL FILENAME: %s\n", PEDESTAL_FILENAME);
+  printf("COMMON_MODE_FILENAME: %s\n", COMMON_MODE_FILENAME);
+  DALMASTOP;
 }
 
 /****************************************
