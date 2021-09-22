@@ -27,7 +27,9 @@
 #include "sdLib.h"
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
+#ifdef ENABLE_F1
 #include "f1tdcLib.h"       /* library of f1tdc routines */
+#endif
 
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
@@ -49,11 +51,13 @@ extern int fadcA32Base, nfadc;
       fadc250Config(rol->usrConfig);		\
   }
 
+#ifdef ENABLE_F1
 /* F1TDC Specifics */
 extern int f1tdcA32Base;
 extern int nf1tdc;
 #define F1_ADDR  (0x100000)
 #define F1TDC_BANK 0x4
+#endif
 
 /* for the calculation of maximum data words in the block transfer */
 unsigned int MAXFADCWORDS=0;
@@ -184,6 +188,7 @@ rocDownload()
 
   sdSetActiveVmeSlots(faScanMask()); /* Tell the sd where to find the fadcs */
 
+#ifdef ENABLE_F1
   /* Setup the F1TDC */
   f1tdcA32Base = 0x08800000;
 
@@ -200,10 +205,13 @@ rocDownload()
   } else {
     f1GEnableBusError();
   }
+#endif
 
   tiStatus(0);
   sdStatus(0);
+#ifdef ENABLE_F1
   f1GStatus(0);
+#endif
   faGStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -217,6 +225,7 @@ rocPrestart()
 
   /* Program/Init VME Modules Here */
 
+#ifdef ENABLE_F1
   /* Use 31.25MHz clock from TI */
   f1SetClockPeriod(32);
 
@@ -241,6 +250,7 @@ rocPrestart()
     }
   f1GClear();
   f1GStatus(0);
+#endif
 
 
   for(ifa=0; ifa < nfadc; ifa++)
@@ -260,7 +270,9 @@ rocPrestart()
 
   DALMAGO;
   sdStatus(0);
+#ifdef ENABLE_F1
   f1GStatus(0);
+#endif
   tiStatus(0);
   faGStatus(0);
   DALMASTOP;
@@ -298,8 +310,10 @@ rocGo()
   /*  Enable FADC */
   faGEnable(0, 0);
 
+#ifdef ENABLE_F1
 #ifdef F1_SOFTTRIG
   f1GEnableSoftTrig();
+#endif
 #endif
 
 #ifdef TI_MASTER
@@ -351,6 +365,7 @@ rocEnd()
   /* FADC Disable */
   faGDisable(0);
 
+#ifdef ENABLE_F1
   /* F1TDC Event status - Is all data read out */
   int islot = 0;
 #ifdef F1_SOFTTRIG
@@ -362,10 +377,13 @@ rocEnd()
     f1DisableData(f1Slot(islot));
     /* f1Reset(f1Slot(islot),0); */
   }
+#endif
 
   DALMAGO;
   sdStatus(0);
+#ifdef ENABLE_F1
   f1GStatus(0);
+#endif
   tiStatus(0);
   faGStatus(0);
   DALMASTOP;
@@ -448,6 +466,7 @@ rocTrigger(int arg)
 
   int roflag = 1;
 
+#ifdef ENABLE_F1
   if(nf1tdc <= 1) {
     roflag = 1; /* DMA Transfer */
   } else {
@@ -506,6 +525,7 @@ rocTrigger(int arg)
     }
   *dma_dabufp++ = LSWAP(0xda0000ff); /* Event EOB */
   BANKCLOSE;
+#endif
 
   /* Check for SYNC Event */
   if(tiGetSyncEventFlag() == 1)
@@ -538,6 +558,7 @@ rocTrigger(int arg)
 	    }
 	}
 
+#ifdef ENABLE_F1
       for(islot = 0; islot < nf1tdc; islot++)
 	{
 	  davail = f1Dready(f1Slot(islot));
@@ -570,6 +591,7 @@ rocTrigger(int arg)
 
 	    }
 	}
+#endif
 
     }
 
@@ -588,12 +610,14 @@ rocCleanup()
   printf("%s: Reset all FADCs\n",__FUNCTION__);
   faGReset(1);
 
+#ifdef ENABLE_F1
   printf("%s: Reset all F1TDCs\n",__FUNCTION__);
   int islot;
   for(islot=0; islot<nf1tdc; islot++)
     {
       f1HardReset(f1Slot(islot)); /* Reset, and DO NOT restore A32 settings (1) */
     }
+#endif
 
 #ifdef TI_MASTER
   tiResetSlaveConfig();
