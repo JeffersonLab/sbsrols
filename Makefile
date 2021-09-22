@@ -18,9 +18,10 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= ti_master_list.so ti_slave_list.so sfi_list.so bbshower_list.so
+VMEROL			= ti_master_list.so ti_slave_list.so sfi_list.so bbshower_list.so \
+			bbshower_scalers_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -lsfifb -lfadc -lts -lsd -lf1tdc
+ROLLIBS			= -lsfifb -lfadc -lts -lsd -lf1tdc -ldalmaRol
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -92,9 +93,17 @@ bbshower_slave_list.so: bbshower_list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
+bbshower_scalers_slave_list.so: bbshower_scalers_list.c ../scaler_server/shmLib.o ../scaler_server/linuxScalerLib.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) ../scaler_server/shmLib.o -o $@ $<
+
 bbshower_list.so: bbshower_list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+bbshower_scalers_list.so: bbshower_scalers_list.c #../scaler_server/shmLib.o ../scaler_server/linuxScalerLib.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) ../scaler_server/shmLib.o ../scaler_server/vmeDSClib.o ../scaler_server/sis3820Lib.o -o $@ $<
 
 sfi_slave_list.so: sfi_list.c
 	@echo " CC     $@"

@@ -24,7 +24,7 @@
 #define TI_ADDR  0
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x4A
+#define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
@@ -195,6 +195,12 @@ rocTrigger(int evntno)
 
   /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
+
+}
+
+void
+rocLoad()
+{
 
 }
 

@@ -8,7 +8,7 @@
 
 /* Event Buffer definitions */
 #define MAX_EVENT_POOL     10
-#define MAX_EVENT_LENGTH   1024*60      /* Size in Bytes */
+#define MAX_EVENT_LENGTH   1024*240      /* Size in Bytes */
 
 #ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
@@ -19,8 +19,9 @@
 #endif
 #define TI_ADDR    (21<<19)          /* GEO slot 21 */
 
-#define FIBER_LATENCY_OFFSET 0x10  /* measured longest fiber length */
+#define FIBER_LATENCY_OFFSET 0x50  /* measured longest fiber length */
 
+#include <unistd.h>
 #include "dmaBankTools.h"
 #include "tiprimary_list.c" /* source required for CODA */
 #include "sdLib.h"
@@ -28,11 +29,14 @@
 #include "fadc250Config.h"
 #include "f1tdcLib.h"       /* library of f1tdc routines */
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
 #define BUFFERLEVEL 1
 
 /* FADC Library Variables */
 extern int fadcA32Base, nfadc;
-#define NFADC     4
+#define NFADC     18
 /* Address of first fADC250 */
 #define FADC_ADDR (3<<19)
 /* Increment address to find next fADC250 */
@@ -48,7 +52,7 @@ extern int fadcA32Base, nfadc;
 /* F1TDC Specifics */
 extern int f1tdcA32Base;
 extern int nf1tdc;
-#define F1_ADDR  (0xc80000)
+#define F1_ADDR  (0x100000)
 #define F1TDC_BANK 0x4
 
 /* for the calculation of maximum data words in the block transfer */
@@ -58,11 +62,16 @@ unsigned int MAXFADCWORDS=0;
 static unsigned int sdScanMask = 0;
 
 /*
-  enable triggers (random or fixed rate) from internal pulser
- */
-//#define INTRANDOMPULSER
-/* #define INTFIXEDPULSER */
+  Global to configure the trigger source
+      0 : tsinputs
+      1 : TI random pulser
+      2 : TI fixed pulser
 
+  Set with rocSetTriggerSource(int source);
+*/
+int rocTriggerSource = 0;
+void rocSetTriggerSource(int source); // routine prototype
+ 
 
 /* function prototype */
 void rocTrigger(int arg);
@@ -86,11 +95,14 @@ rocDownload()
    *      TI_TRIGGER_TSREV2    4  Ribbon cable from Legacy TS module
    *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
    */
-#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
-  tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
-#else
-  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
-#endif
+  if(rocTriggerSource == 0)
+    {
+      tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+    }
+  else
+    {
+      tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+    }
 
   /* Enable set specific TS input bits (1-6) */
   tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
@@ -146,9 +158,7 @@ rocDownload()
 
   fadcA32Base = 0x09000000;
 
-  vmeSetQuietFlag(1);
   faInit(FADC_ADDR, FADC_INCR, NFADC, iflag);
-  vmeSetQuietFlag(0);
 
   /* Just one FADC250 */
   if(nfadc == 1)
@@ -174,28 +184,22 @@ rocDownload()
 
   sdSetActiveVmeSlots(faScanMask()); /* Tell the sd where to find the fadcs */
 
-  f1tdcA32Base = 0x08800000;
   /* Setup the F1TDC */
-  f1ConfigReadFile("/home/sbs-onl/cfg/intelbbshower_f1tdc.cfg");
+  f1tdcA32Base = 0x08800000;
 
-  iflag = 4;  /* read chip config from file */
+  /*
+    Configure first with local clock, normal res, trigger matching
+    Configure with system clock in PRESTART
+  */
+  iflag = 2;
 
   f1Init(F1_ADDR, 1<<19, 1, iflag);
 
-  /* For multiple boards we enable multiblock, which also enables
-     the bus error on the last board. When not in multiblock we can
-     enable multiblock on the single board ourselves.
-  */
   if(nf1tdc > 1) {
     f1EnableMultiBlock();
   } else {
     f1GEnableBusError();
   }
-
-  f1GStatus(0);
-
-  f1GEnableData(F1_ALL_CHIPS); /* Enable data on all chips */
-  printf("\n\n\n * * * * BEFORE Sending ReSync (to lock resolution) \n\n\n");
 
   tiStatus(0);
   sdStatus(0);
@@ -209,9 +213,36 @@ rocDownload()
 void
 rocPrestart()
 {
-  int ifa;
+  int ifa, if1;
 
   /* Program/Init VME Modules Here */
+
+  /* Use 31.25MHz clock from TI */
+  f1SetClockPeriod(32);
+
+  for(if1 = 0; if1 < nf1tdc; if1++)
+    {
+      f1SetInputPort(f1Slot(if1), 0); /* Front panel clock */
+      f1DisableClk(f1Slot(if1), 0);   /* Disable internal 40MHz clock */
+
+      f1EnableClk(f1Slot(if1), 1);    /* Use external clock */
+    }
+
+  f1ConfigReadFile("/home/sbs-onl/cfg/intelbbshower_f1tdc_3125.cfg");
+  for(if1 = 0; if1 < nf1tdc; if1++)
+    {
+      f1SetConfig(f1Slot(if1), 4, 0); /* Configure f1chips with file */
+    }
+
+  usleep(50000);
+  for(if1 = 0; if1 < nf1tdc; if1++)
+    {
+      f1EnableData(f1Slot(if1),0xff);
+    }
+  f1GClear();
+  f1GStatus(0);
+
+
   for(ifa=0; ifa < nfadc; ifa++)
     {
       faSoftReset(faSlot(ifa),0);
@@ -226,11 +257,13 @@ rocPrestart()
   printf("rocPrestart: Block Level set to %d\n",blockLevel);
 #endif
   tiSetTriggerPulse(1,25,3,0); // delay is second argument in units of 16ns
+
+  DALMAGO;
+  sdStatus(0);
+  f1GStatus(0);
   tiStatus(0);
   faGStatus(0);
-
-  /* FIXME: Need a way to send syncreset to f1tdc here */
-  f1GStatus(0);
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -270,26 +303,28 @@ rocGo()
 #endif
 
 #ifdef TI_MASTER
-#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
-  printf("************************************************************\n");
-  printf("%s: TI Configured for Internal Pulser Triggers\n",
-	 __func__);
-  printf("************************************************************\n");
-#endif
+  if(rocTriggerSource != 0)
+    {
+      printf("************************************************************\n");
+      daLogMsg("INFO","TI Configured for Internal Pulser Triggers");
+      printf("************************************************************\n");
 
-  /* Example: How to start internal pulser trigger */
-#ifdef INTRANDOMPULSER
-  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-  tiSetRandomTrigger(1,0x7);
-#elif defined (INTFIXEDPULSER)
-  /*
-    Enable fixed rate with period (ns)
-    120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
-     - arg2 = 0xffff - Continuous
-     - arg2 < 0xffff = arg2 times
-  */
-  tiSoftTrig(1,0xffff,700,0);
-#endif
+      if(rocTriggerSource == 1)
+	{
+	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
+	  tiSetRandomTrigger(1,7);
+	}
+
+      if(rocTriggerSource == 2)
+	{
+	  /*    Enable fixed rate with period (ns)
+		120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
+		- arg2 = 0xffff - Continuous
+		- arg2 < 0xffff = arg2 times
+	  */
+	  tiSoftTrig(1,0xffff,100,0);
+	}
+    }
 #endif
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 }
@@ -299,21 +334,22 @@ rocEnd()
 {
 
 #ifdef TI_MASTER
-  /* Example: How to stop internal pulser trigger */
-#ifdef INTRANDOMPULSER
-  /* Disable random trigger */
-  tiDisableRandomTrigger();
-#elif defined (INTFIXEDPULSER)
-  /* Disable Fixed Rate trigger */
-  tiSoftTrig(1,0,700,0);
-#endif
+  if(rocTriggerSource == 1)
+    {
+      /* Disable random trigger */
+      tiDisableRandomTrigger();
+    }
+
+  if(rocTriggerSource == 2)
+    {
+      /* Disable Fixed Rate trigger */
+      tiSoftTrig(1,0,100,0);
+    }
+
 #endif
 
   /* FADC Disable */
   faGDisable(0);
-
-  /* FADC Event status - Is all data read out */
-  faGStatus(0);
 
   /* F1TDC Event status - Is all data read out */
   int islot = 0;
@@ -322,13 +358,17 @@ rocEnd()
     f1DisableSoftTrig(f1Slot(islot));
 #endif
 
-  f1GStatus(0);
-
   for(islot = 0; islot < nf1tdc; islot++) {
-    f1Reset(f1Slot(islot),0);
+    f1DisableData(f1Slot(islot));
+    /* f1Reset(f1Slot(islot),0); */
   }
 
+  DALMAGO;
+  sdStatus(0);
+  f1GStatus(0);
   tiStatus(0);
+  faGStatus(0);
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d events\n",tiGetIntCount());
 
@@ -357,7 +397,7 @@ rocTrigger(int arg)
   dCnt = tiReadTriggerBlock(dma_dabufp);
   if(dCnt<=0)
     {
-      printf("No data or error.  dCnt = %d\n",dCnt);
+      daLogMsg("ERROR","No TI Trigger data or error.  dCnt = %d\n",dCnt);
     }
   else
     {
@@ -384,7 +424,7 @@ rocTrigger(int arg)
 
       if(blockError)
 	{
-	  printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
+	  daLogMsg("ERROR","fadc Slot %d: in transfer (event = %d), nwords = 0x%x\n",
 		 faSlot(ifa), roCount, nwords);
 
 	  for(ifa = 0; ifa < nfadc; ifa++)
@@ -401,7 +441,7 @@ rocTrigger(int arg)
     }
   else
     {
-      printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
+      daLogMsg("ERROR","Event %d: fadc Datascan != Scanmask  (0x%08x != 0x%08x)\n",
 	     roCount, datascan, scanmask);
     }
   BANKCLOSE;
@@ -434,11 +474,12 @@ rocTrigger(int arg)
   if(datascan>0)
     {
       for(islot = 0; islot < nf1tdc; islot++) {
-       nwords = f1ReadEvent(f1Slot(islot),dma_dabufp,2*nf1tdc*64,roflag);
+       nwords = f1ReadEvent(f1Slot(islot),dma_dabufp,100*nf1tdc*64,roflag);
 
       if(nwords < 0)
 	{
-	  printf("ERROR: in transfer (event = %d), status = 0x%x\n", tiGetIntCount(),nwords);
+	  daLogMsg("ERROR","f1Slot = %d  event = %d , status = 0x%x\n",
+		   f1Slot(islot), tiGetIntCount(),nwords);
 	  *dma_dabufp++ = LSWAP(0xda000bad);
 	}
       else
@@ -449,8 +490,8 @@ rocTrigger(int arg)
     }
   else
     {
-      printf("ERROR: Data not ready in event %d, F1TDC slot %d\n",tiGetIntCount(),
-	     f1Slot(0));
+      daLogMsg("ERROR","Data not ready in event %d, F1TDC slot %d\n",
+	       tiGetIntCount(), f1Slot(0));
       *dma_dabufp++ = LSWAP(0xda000bad);
     }
   *dma_dabufp++ = LSWAP(0xda0000ff); /* Event EOB */
@@ -463,8 +504,8 @@ rocTrigger(int arg)
       int davail = tiBReady();
       if(davail > 0)
 	{
-	  printf("%s: ERROR: TI Data available (%d) after readout in SYNC event \n",
-		 __func__, davail);
+	  daLogMsg("ERROR","TI Data available (%d) after readout in SYNC event \n",
+		 davail);
 
 	  while(tiBReady())
 	    {
@@ -477,8 +518,8 @@ rocTrigger(int arg)
 	  davail = faBready(faSlot(ifa));
 	  if(davail > 0)
 	    {
-	      printf("%s: ERROR: fADC250 Data available (%d) after readout in SYNC event \n",
-		     __func__, davail);
+	      daLogMsg("ERROR", "fADC250 Data available (%d) after readout in SYNC event \n",
+		     davail);
 
 	      while(faBready(faSlot(ifa)))
 		{
@@ -492,19 +533,35 @@ rocTrigger(int arg)
 	  davail = f1Dready(f1Slot(islot));
 	  if(davail > 0)
 	    {
-	      printf("%s: ERROR: f1tdc Data available (%d) after readout in SYNC event \n",
-		     __func__, davail);
-
+	      daLogMsg("ERROR","f1tdc Data available (%d) after readout in SYNC event \n",
+		     davail);
 	      while(f1Dready(f1Slot(islot)))
 		{
-		  vmeDmaFlush(f1GetA32(faSlot(islot)));
+		  vmeDmaFlush(f1GetA32(f1Slot(islot)));
 		}
+#ifdef OLDDMAFLUSH
+	      unsigned int trash[512];
+	      int timeout = 0;
+	      while(f1Dready(f1Slot(islot)))
+		{
+		  nwords = f1ReadEvent(f1Slot(islot),trash,512,0);
+		  printf("%s: dumped %d words\n", __func__, nwords);
+		  if((nwords < 0) || (timeout++ > 10))
+		    break;
+		}
+#endif
+
 	    }
 	}
 
-      // FIXME: Need f1tdc data check
     }
 
+}
+
+void
+rocLoad()
+{
+  dalmaInit(1);
 }
 
 void
@@ -524,7 +581,39 @@ rocCleanup()
 #ifdef TI_MASTER
   tiResetSlaveConfig();
 #endif
+  dalmaClose();
 
+}
+
+
+void
+rocSetTriggerSource(int source)
+{
+#ifdef TI_MASTER
+  if(TIPRIMARYflag == 1)
+    {
+      printf("%s: ERROR: Trigger Source already enabled.  Ignoring change to %d.\n",
+	     __func__, source);
+    }
+  else
+    {
+      rocTriggerSource = source;
+
+      if(rocTriggerSource == 0)
+	{
+	  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+	}
+      else
+	{
+	  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+	}
+
+      daLogMsg("INFO","Setting trigger source (%d)", rocTriggerSource);
+    }
+#else
+  printf("%s: ERROR: TI is not Master  Ignoring change to %d.\n",
+	 __func__, source);
+#endif
 }
 
 /*
