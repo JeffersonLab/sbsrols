@@ -71,7 +71,7 @@ static unsigned int sdScanMask = 0;
 */
 int rocTriggerSource = 0;
 void rocSetTriggerSource(int source); // routine prototype
- 
+
 
 /* function prototype */
 void rocTrigger(int arg);
@@ -454,6 +454,7 @@ rocTrigger(int arg)
     roflag = 2; /* Multiple DMA Transfer */
   }
 
+  int f1maxdata = 100*nf1tdc*64;
   /* Set DMA for A32 - BLT64 */
   vmeDmaConfig(2,3,0);
   BANKOPEN(F1TDC_BANK,BT_UI4,0);
@@ -474,13 +475,22 @@ rocTrigger(int arg)
   if(datascan>0)
     {
       for(islot = 0; islot < nf1tdc; islot++) {
-       nwords = f1ReadEvent(f1Slot(islot),dma_dabufp,100*nf1tdc*64,roflag);
+       nwords = f1ReadEvent(f1Slot(islot),dma_dabufp,f1maxdata,roflag);
 
       if(nwords < 0)
 	{
-	  daLogMsg("ERROR","f1Slot = %d  event = %d , status = 0x%x\n",
+	  daLogMsg("ERROR","f1ReadEvent error.  f1Slot = %d  event = %d , status = 0x%x\n",
 		   f1Slot(islot), tiGetIntCount(),nwords);
 	  *dma_dabufp++ = LSWAP(0xda000bad);
+	  f1GClear();
+	}
+      else if (nwords >= f1maxdata)
+	{
+	  dma_dabufp += nwords;
+	  *dma_dabufp++ = LSWAP(0xda000bad);
+	  daLogMsg("ERROR","MAX f1 data.  f1slot = %d  event = %d\n",
+		   f1Slot(islot), tiGetIntCount());
+	  f1GClear();
 	}
       else
 	{
@@ -504,8 +514,8 @@ rocTrigger(int arg)
       int davail = tiBReady();
       if(davail > 0)
 	{
-	  daLogMsg("ERROR","TI Data available (%d) after readout in SYNC event \n",
-		 davail);
+	  daLogMsg("ERROR","TI Data available (%d) after readout in SYNC event (%d)\n",
+		   davail, tiGetIntCount());
 
 	  while(tiBReady())
 	    {
@@ -518,8 +528,8 @@ rocTrigger(int arg)
 	  davail = faBready(faSlot(ifa));
 	  if(davail > 0)
 	    {
-	      daLogMsg("ERROR", "fADC250 Data available (%d) after readout in SYNC event \n",
-		     davail);
+	      daLogMsg("ERROR", "fADC250 Data available (%d) after readout in SYNC event (%d)\n",
+		     davail, tiGetIntCount());
 
 	      while(faBready(faSlot(ifa)))
 		{
@@ -533,23 +543,30 @@ rocTrigger(int arg)
 	  davail = f1Dready(f1Slot(islot));
 	  if(davail > 0)
 	    {
-	      daLogMsg("ERROR","f1tdc Data available (%d) after readout in SYNC event \n",
-		     davail);
+	      daLogMsg("ERROR","f1tdc Data available (%d) after readout in SYNC event (%d)\n",
+		     davail, tiGetIntCount());
+#ifdef F1DMAFLUSH
 	      while(f1Dready(f1Slot(islot)))
 		{
 		  vmeDmaFlush(f1GetA32(f1Slot(islot)));
 		}
-#ifdef OLDDMAFLUSH
-	      unsigned int trash[512];
-	      int timeout = 0;
-	      while(f1Dready(f1Slot(islot)))
-		{
-		  nwords = f1ReadEvent(f1Slot(islot),trash,512,0);
-		  printf("%s: dumped %d words\n", __func__, nwords);
-		  if((nwords < 0) || (timeout++ > 10))
-		    break;
-		}
+#else
+	      f1Clear(f1Slot(islot));
 #endif
+	    }
+	}
+
+      /* Check for f1 errors */
+      stat = f1GErrorStatus(0);
+      if (stat)
+	{
+	  f1GClearStatus(0); /* Clear Latched Status again */
+	  stat = f1GErrorStatus(0);
+	  if(stat)
+	    {
+	      daLogMsg("ERROR",
+		       "F1 TDCs have active error condition.  stat = 0x%x  SYNC event (%d)\n",
+		       stat, tiGetIntCount());
 
 	    }
 	}
