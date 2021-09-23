@@ -121,6 +121,15 @@ unsigned int MAXF1WORDS   = 0;
 /* SD variables */
 static unsigned int sdScanMask = 0;
 
+#ifdef FADC_SCALERS
+/* FADC Scalers */
+// Define this to include scaler data in coda events
+// #define FADC_SCALER_BANKS
+int scaler_period=2;
+struct timespec last_time;
+#include "../scaler_server/scale32LibNew.c"
+#include "../scaler_server/linuxScalerLib.c"
+#endif
 
 /* function prototypes */
 void rocTrigger(int arg);
@@ -190,6 +199,15 @@ rocDownload()
       daLogMsg("ERROR","SD not found");
     }
 
+#ifdef FADC_SCALERS
+  if(fadcscaler_init_crl()) {
+    printf("Scalers initialized\n");
+  } else {
+    printf("Failed to initialize scalers\n");
+  }
+  set_runstatus(0);
+#endif
+
   tiStatus(0);
   sdStatus(0);
 
@@ -202,6 +220,12 @@ rocPrestart()
 {
   int ifa, iflag;
   int i,ti_input_triggers;
+
+#ifdef FADC_SCALERS
+  /* Suspend scaler task */
+  set_runstatus(1);
+  clock_gettime(CLOCK_REALTIME, &last_time);
+#endif
 
   /* Program/Init VME Modules Here */
 
@@ -414,6 +438,13 @@ rocGo()
 #endif /* ENABLE_FADC */
 
   /* Interrupts/Polling enabled after conclusion of rocGo() */
+
+#ifdef FADC_SCALERS
+  /* Clear and enable FADC scalers */
+  clear_scalers();
+  printf("fadc scalers cleared\n");
+  enable_scalers();
+#endif
 }
 
 void
@@ -446,6 +477,12 @@ rocEnd()
 #endif
   /* Turn off all output ports */
   tiSetOutputPort(0,0,0,0);
+
+#ifdef FADC_SCALERS
+  /* Resume stand alone scaler server */
+  disable_scalers();
+  set_runstatus(0);		/* Tell Stand alone scaler task to resume  */
+#endif
 
   printf("rocEnd: Ended after %d events\n",tiGetIntCount());
 
@@ -669,6 +706,30 @@ rocTrigger(int arg)
 
     }
 
+#ifdef FADC_SCALERS
+  if (scaler_period > 0) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    if((scaler_period>0 &&
+	((now.tv_sec - last_time.tv_sec
+	  + ((double)now.tv_nsec - (double)last_time.tv_nsec)/1000000000L) >= scaler_period))) {
+#ifdef FADC_SCALER_BANKS      
+      BANKOPEN(9250,BT_UI4,0);
+      read_fadc_scalers(&dma_dabufp,0);
+      BANKCLOSE;
+      BANKOPEN(9001,BT_UI4,syncFlag);
+      read_ti_scalers(&dma_dabufp,0);
+      BANKCLOSE;
+#else
+      read_fadc_scalers(0,0);
+      read_ti_scalers(0,0);
+#endif
+      last_time = now;
+      read_clock_channels();
+    }
+  }
+#endif
+  
 }
 
 void

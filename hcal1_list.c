@@ -51,7 +51,7 @@
 #include "hcal_usrstrutils.c" /* So we can read from a flags file */
 
 #ifdef ENABLE_HCAL_PULSER
-#include "hcalLib.h"
+#include "hcalLib.h"   /* Source of hcalClkIn is here (../linuxvme/include/hcalLib.h?? */
 #endif
 
 #define BUFFERLEVEL 1
@@ -87,6 +87,16 @@ unsigned int MAXFADCWORDS=0;
 
 /* SD variables */
 static unsigned int sdScanMask = 0;
+
+#ifdef FADC_SCALERS
+/* FADC Scalers */
+// Define this to include scaler data in coda events
+// #define FADC_SCALER_BANKS
+int scaler_period=2;
+struct timespec last_time;
+#include "../scaler_server/scale32LibNew.c"
+#include "../scaler_server/linuxScalerLib.c"
+#endif
 
 #ifdef ENABLE_HCAL_PULSER
 #define HCAL_LED_NLIST 3 /* Number of steps in sequence */
@@ -171,6 +181,15 @@ rocDownload()
       daLogMsg("ERROR","SD not found");
     }
 
+#ifdef FADC_SCALERS
+  if(fadcscaler_init_crl()) {
+    printf("Scalers initialized\n");
+  } else {
+    printf("Failed to initialize scalers\n");
+  }
+  set_runstatus(0);
+#endif
+
   tiStatus(0);
   sdStatus(0);
 
@@ -183,6 +202,12 @@ rocPrestart()
 {
   int ifa;
   int i,ti_input_triggers;
+
+#ifdef FADC_SCALERS
+  /* Suspend scaler task */
+  set_runstatus(1);
+  clock_gettime(CLOCK_REALTIME, &last_time);
+#endif
 
   /* Program/Init VME Modules Here */
 
@@ -197,7 +222,8 @@ rocPrestart()
   printf("prescales: ");
   for(i = 0; i < NINPUTS; i++) {
     ti_input_triggers |= (flag_prescale[i]>=0)<<i;
-    printf("ps%d=%d ",i+1,flag_prescale[i]);
+    printf("ps%d=%d \n",i+1,flag_prescale[i]);
+    //printf("*******************ti_input_triggers = %d\n",ti_input_triggers);
   }
   printf("\n");
   tiEnableTSInput( ti_input_triggers );
@@ -205,7 +231,10 @@ rocPrestart()
   /* Setup the prescales */
   for(i = 0; i < NINPUTS; i++) {
     if(flag_prescale[i]>=0) {
-      tiSetInputPrescale(1<<i,flag_prescale[i]);
+      //tiSetInputPrescale(1<<i,flag_prescale[i]);
+      //printf("****tiSetInputPrescale(%d,%d)\n",1<<i,flag_prescale[i]);
+      tiSetInputPrescale(i+1,flag_prescale[i]);
+      printf("****tiSetInputPrescale(%d,%d)\n",i+1,flag_prescale[i]);
     }
   }
 #endif
@@ -272,6 +301,13 @@ rocPrestart()
     HCAL_LED_C_STEP = flag_LED_STEP[0];
     HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
     hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);
   } else {
     printf("Pulser_enabled is *False*");
     hcalClkIn(0);
@@ -324,6 +360,13 @@ rocGo()
 #endif /* ENABLE_FADC */
 
   /* Interrupts/Polling enabled after conclusion of rocGo() */
+
+#ifdef FADC_SCALERS
+  /* Clear and enable FADC scalers */
+  clear_scalers();
+  printf("fadc scalers cleared\n");
+  enable_scalers();
+#endif
 }
 
 void
@@ -345,6 +388,12 @@ rocEnd()
 #endif
   /* Turn off all output ports */
   tiSetOutputPort(0,0,0,0);
+
+#ifdef FADC_SCALERS
+  /* Resume stand alone scaler server */
+  disable_scalers();
+  set_runstatus(0);		/* Tell Stand alone scaler task to resume  */
+#endif
 
   printf("rocEnd: Ended after %d events\n",tiGetIntCount());
 
@@ -370,6 +419,7 @@ rocTrigger(int arg)
   vmeDmaConfig(2,5,1);
 
   dCnt = tiReadTriggerBlock(dma_dabufp);
+  /*  printf("TI says trigger block length is %d \n",dCnt);   */
   if(dCnt<=0)
     {
       printf("No data or error.  dCnt = %d\n",dCnt);
@@ -378,7 +428,6 @@ rocTrigger(int arg)
     {
       dma_dabufp += dCnt;
     }
-  printf("****  Got event trigger  Printf WORKS *****  \n");
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
@@ -470,7 +519,7 @@ rocTrigger(int arg)
     HCAL_LED_COUNT++;
     BANKOPEN(BANK_HCAL_PULSER,BT_UI4,0);
     /**dma_dabufp++ = LSWAP(tiGetIntCount());*/
-    *dma_dabufp++ = LSWAP(HCAL_LED_ITER);
+        *dma_dabufp++ = LSWAP(HCAL_LED_ITER);
     *dma_dabufp++ = LSWAP(HCAL_LED_C_STEP);
     *dma_dabufp++ = LSWAP(HCAL_LED_COUNT);
     *dma_dabufp++ = LSWAP((HCAL_LED_ITER<<22)|(HCAL_LED_C_STEP<<16)|HCAL_LED_COUNT);
@@ -487,9 +536,37 @@ rocTrigger(int arg)
       printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
         HCAL_LED_ITER,HCAL_LED_C_STEP,tiGetIntCount());
       hcalClkIn(HCAL_LED_C_STEP);
+      /*      hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);
+      hcalClkIn(HCAL_LED_C_STEP);
+      hcalClkIn(HCAL_LED_C_STEP);
+      hcalClkIn(HCAL_LED_C_STEP); */
+    }
+  }
+#endif
+
+#ifdef FADC_SCALERS
+  if (scaler_period > 0) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    if((scaler_period>0 &&
+	((now.tv_sec - last_time.tv_sec
+	  + ((double)now.tv_nsec - (double)last_time.tv_nsec)/1000000000L) >= scaler_period))) {
+#ifdef FADC_SCALER_BANKS      
+      BANKOPEN(9250,BT_UI4,0);
+      read_fadc_scalers(&dma_dabufp,0);
+      BANKCLOSE;
+      BANKOPEN(9001,BT_UI4,syncFlag);
+      read_ti_scalers(&dma_dabufp,0);
+      BANKCLOSE;
+#else
+      read_fadc_scalers(0,0);
+      read_ti_scalers(0,0);
+#endif
+      last_time = now;
+      read_clock_channels();
     }
   }
 #endif
@@ -533,17 +610,12 @@ void readUserFlags()
 
 #ifdef ENABLE_HCAL_PULSER
   /* Read the hcal pulser step info */
-  printf("********************************************/n");
-  printf("********************************************/n");
-  printf("********************************************/n");
-  printf("********************************************/n");
-  printf("********************************************/n");
-  printf("********************************************/n");
-    printf("flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);
+  /*  printf("******************************************** /n");*/
+  /*    printf("flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);*/
   if(flag_pulserTriggerInput >= 0 && flag_pulserTriggerInput <6) {
     flag_PULSER_ENABLED = flag_prescale[flag_pulserTriggerInput];
-    printf("OK flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);
-    printf("flag_prescale[%d]=%d\n",flag_pulserTriggerInput,flag_prescale[flag_pulserTriggerInput]);
+    /*    printf("OK flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);*/
+	  printf("flag_prescale[%d]=%d\n",flag_pulserTriggerInput,flag_prescale[flag_pulserTriggerInput]);
     if(flag_PULSER_ENABLED) {
       flag_LED_NSTEPS=getint("pulser_nsteps");
       char ptext[50];
