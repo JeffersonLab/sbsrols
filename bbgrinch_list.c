@@ -1,8 +1,8 @@
 /*************************************************************************
  *
- *  vetroc_list.c - Compton readout list.
- *             Configure: 2 VETROC, TI, SD
- *             Readout:   2 VETROC, TI
+ *  bbgrinch_list.c - GRINCH readout list
+ *             Configure: 4 VETROC, 2 c792s, TI, SD
+ *             Readout:   4 VETROC, 2 c792s, TI
  *
  *     TI delivers accepted Triggers, Clocks, and SyncReset to
  *       SD -> VETROC
@@ -16,8 +16,8 @@
 #define BUFFERLEVEL 1
 
 /* Event Buffer definitions */
-#define MAX_EVENT_POOL     10
-#define MAX_EVENT_LENGTH   4000000 /* Size in Bytes - 4194304 is max allowable */
+#define MAX_EVENT_LENGTH 5*10240 /* in Bytes */
+#define MAX_EVENT_POOL   400   /* in number of events */
 
 /* TI_MASTER / TI_SLAVE defined in Makefile */
 
@@ -30,38 +30,56 @@
 #endif
 #define TI_ADDR  0 /* Auto initialize (search for TI by slot */
 
-/* VETROC definitions *///#define USE_VETROC
+/* Measured longest fiber length in system */
+#define FIBER_LATENCY_OFFSET 0x50
+
+/* Include */
+#include "dmaBankTools.h"   /* Macros for handling CODA banks */
+#include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
+
+/* DMA config definitions */
+#define A24DMA     1,2,0
+#define A24DMA2    1,5,2
+#define A32DMA1    2,5,1
+#define A32DMA2    2,5,2
+
+/* SD variables */
+#include "sdLib.h"
+static unsigned int sdScanMask = 0;
+
+/* VETROC variables */
+#include "vetrocLib.h"      /* VETROC library */
+#include "vetrocConfig.h"
 #define USE_VETROC
 #define MAXVETROCDATA 1200*BLOCKLEVEL
-#define VETROC_SLOT 13					/* slot of first vetroc */
+#define VETROC_SLOT 3				/* slot of first vetroc */
 #define VETROC_SLOT_INCR 1			/* slot increment */
-#define NVETROC	5								/* number of vetrocs used */
+#define NVETROC	4								/* number of vetrocs used */
 #define VETROC_ROMODE 1  /* Readout Mode: 0 = SCT, 1 = Single Board DMA, 2 = MultiBoard DMA */
 #define VETROC_READ_CONF_FILE {			\
     vetrocConfig("");				\
     if(rol->usrConfig)				\
       vetrocConfig(rol->usrConfig);		\
   }
-#define VETROC_BANK 0x4
+#define VETROC_BANK 526
 
-/* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x4A
-
-/* Include */
-#include "dmaBankTools.h"   /* Macros for handling CODA banks */
-#include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
-#include "sdLib.h"
-#include "vetrocLib.h"      /* VETROC library */
-#include "vetrocConfig.h"
-
-/* SD variables */
-static unsigned int sdScanMask = 0;
-
-/* VETROC variables */
 static unsigned int vetrocSlotMask=0;
 int nvetroc=0;		// number of vetrocs in the crate
-unsigned int *tdcbuf;
 extern int vetrocA32Base;                      /* Minimum VME A32 Address for use by VETROCs */
+
+/* c792 variables */
+#include "c792Lib.h"        /* v792 library */
+#define MAX_ADC_DATA 44
+#define use792      0
+#define V792_NMOD   2
+// V792_ADR1 is the HW address for the leftmost v792 in the crate
+#define V792_ADR1   0x11510000 //was  0x11410000 (CA)
+// V792_OFF is the increment for each subsequent v792 (ie. next module is 0x180000)
+#define V792_OFF    0x00100000
+#define C792_BANKID 792
+extern int Nc792;
+
+#include <time.h> /* CARLOS STUFF FOR DEBUGGING PURPOSES */
 
 /*
   enable triggers (random or fixed rate) from internal pulser
@@ -133,17 +151,26 @@ rocDownload()
   if (stat != OK)
     {
       printf("%s: WARNING: sdInit() returned %d\n",__func__, stat);
-      tiSetBusySource(TI_BUSY_LOOPBACK,1);
     }
   else
     {
       printf("Will try to use SD in Switch Slot\n");
       sdSetActiveVmeSlots(0);	// clear active slots
-      tiSetBusySource(TI_BUSY_SWB,1);
     }
 
-
   sdStatus(0);
+
+  if(use792)
+    {
+      c792Init(V792_ADR1,V792_OFF,V792_NMOD,0);
+      int iadc;
+      for(iadc = 0; iadc < Nc792; iadc++)
+	{
+	  c792SetGeoAddress(iadc, iadc+17);
+	}
+      c792GStatus(0);
+    }
+
   tiStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -202,6 +229,21 @@ rocPrestart()
   vetrocGStatus(0);
 #endif
 
+  /* Setup ADCs (no sparcification, enable berr for block reads) */
+  if(use792)
+    {
+      int iadc;
+      for(iadc = 0; iadc < Nc792; iadc++)
+	{
+	  c792Sparse(iadc,0,0);
+	  c792Clear(iadc);
+	  c792EnableBerr(iadc);
+      c792BitSet2(iadc, 1<<14);
+      c792EventCounterReset(iadc);
+	}
+      c792GStatus(0);
+    }
+
 #ifdef TI_MASTER
   /* Set number of events per block (broadcasted to all connected TI Slaves)*/
   tiSetBlockLevel(blockLevel);
@@ -233,13 +275,20 @@ rocGo()
   vetrocGSetBlockLevel(blockLevel);
 #endif
 
+  if(use792)
+    {
+      int iadc;
+      for(iadc = 0; iadc < Nc792; iadc++)
+	c792Enable(iadc);
+    }
+
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 
 #ifdef TI_MASTER
   /* Example: How to start internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Enable Random at rate 500kHz/(2^N): N=7: ~3.9kHz, N=3: ~62kHz  */
-  tiSetRandomTrigger(1,0x2);
+  tiSetRandomTrigger(1,0xf);
 #elif defined (INTFIXEDPULSER)
   /* Enable fixed rate with period (ns) 120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
      - Generated 1000 times */
@@ -274,6 +323,16 @@ rocEnd()
 #ifdef USE_VETROC
   vetrocGStatus(0);
 #endif
+
+  if(use792)
+    {
+      int iadc;
+      for(iadc = 0; iadc < Nc792; iadc++)
+	{
+	  c792Disable(iadc);
+	}
+      c792GStatus(0);
+    }
 
   sdStatus(0);
   tiStatus(1);
@@ -318,6 +377,7 @@ rocTrigger(int arg)
   if(dCnt<=0)
     {
       printf("%d: No TI Trigger data or error.  dCnt = %d\n",roCount,dCnt);
+      tiSetBlockLimit(1);
     }
   else
     { /* TI Data is already in a bank structure.  Bump the pointer */
@@ -370,6 +430,53 @@ rocTrigger(int arg)
   BANKCLOSE;
 #endif
 
+  if(use792)
+    {
+      unsigned int scanmask = 0, datascan = 0;
+      int iadc;
+
+      /* Check if an Event is available */
+      scanmask = c792ScanMask();
+      datascan = c792GDReady(scanmask, 1000);
+
+      BANKOPEN(C792_BANKID,BT_UI4,blockLevel);
+      if(datascan==scanmask)
+	{
+	  for(iadc = 0; iadc < Nc792; iadc++)
+	    {
+	      vmeDmaConfig(2,3,0);
+	      dCnt = c792ReadBlock(iadc,dma_dabufp,MAX_ADC_DATA+40);
+	      if(dCnt <= 0)
+		{
+		  logMsg("%4d: ERROR: ADC %2d Read Failed - Status 0x%x\n",
+			 tiGetIntCount(),
+			 iadc, dCnt,0,0,0,0);
+		  *dma_dabufp++ = LSWAP(iadc);
+		  *dma_dabufp++ = LSWAP(0xda00bad1);
+		  c792Clear(iadc);
+		}
+	      else
+		{
+		  dma_dabufp += dCnt;
+		}
+	    }
+
+	}
+      else
+	{
+	  logMsg("%4d: ERROR: datascan != scanmask for ADC  (0x%08x != 0x%08x)\n",
+		 tiGetIntCount(),
+		 datascan,scanmask,0,0,0,0);
+	  *dma_dabufp++ = LSWAP(datascan);
+	  *dma_dabufp++ = LSWAP(scanmask);
+	  *dma_dabufp++ = LSWAP(0xda00bad2);
+
+	  for(iadc = 0; iadc < Nc792; iadc++)
+	    c792Clear(iadc);
+	}
+      BANKCLOSE;
+    }
+
   /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
 
@@ -385,6 +492,6 @@ rocCleanup()
 
 /*
   Local Variables:
-  compile-command: "make -k vetroc_list.so vetroc_slave_list.so"
+  compile-command: "make -k bbgrinch_list.so bbgrinch_slave_list.so"
   End:
  */
