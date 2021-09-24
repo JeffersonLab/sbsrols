@@ -1,7 +1,7 @@
 /*************************************************************************
  *
- *  bbgrinch_list.c - GRINCH readout list
- *             Configure: 4 VETROC, 2 c792s, TI, SD
+ *  bbgrinch_fadc_list.c - GRINCH readout list
+ *             Configure: 4 VETROC, 2 c792s, TI, SD, 2 FADC
  *             Readout:   4 VETROC, 2 c792s, TI
  *
  *     TI delivers accepted Triggers, Clocks, and SyncReset to
@@ -37,6 +37,9 @@
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
 /* DMA config definitions */
 #define A24DMA     1,2,0
 #define A24DMA2    1,5,2
@@ -63,6 +66,7 @@ static unsigned int sdScanMask = 0;
   }
 #define VETROC_BANK 526
 
+
 static unsigned int vetrocSlotMask=0;
 int nvetroc=0;		// number of vetrocs in the crate
 extern int vetrocA32Base;                      /* Minimum VME A32 Address for use by VETROCs */
@@ -79,13 +83,42 @@ extern int vetrocA32Base;                      /* Minimum VME A32 Address for us
 #define C792_BANKID 792
 extern int Nc792;
 
+#define USE_FADC 1
+#ifdef USE_FADC
+/* FADC Library Variables */
+#include "fadcLib.h"        /* library of FADC250 routines */
+#include "fadc250Config.h"
+extern int nfadc;
+extern unsigned int  fadcA32Base;
+#define NFADC     4
+/* Address of first fADC250 */
+#define FADC_ADDR (13<<19)
+/* Increment address to find next fADC250 */
+#define FADC_INCR (1<<19)
+#define FADC_BANK 250
+
+#define FADC_READ_CONF_FILE {			\
+    fadc250Config("");				\
+    if(rol->usrConfig)				\
+      fadc250Config(rol->usrConfig);		\
+  }
+/* for the calculation of maximum data words in the block transfer */
+unsigned int MAXFADCWORDS=0;
+#endif /* USE_FADC */
+
 #include <time.h> /* CARLOS STUFF FOR DEBUGGING PURPOSES */
 
 /*
-  enable triggers (random or fixed rate) from internal pulser
- */
-/* #define INTRANDOMPULSER */
-/* #define INTFIXEDPULSER */
+  Global to configure the trigger source
+      0 : tsinputs
+      1 : TI random pulser
+      2 : TI fixed pulser
+
+  Set with rocSetTriggerSource(int source);
+*/
+int rocTriggerSource = 0;
+void rocSetTriggerSource(int source); // routine prototype
+
 
 /****************************************
  *  DOWNLOAD
@@ -93,7 +126,7 @@ extern int Nc792;
 void
 rocDownload()
 {
-  int ifa, stat;
+  int ifa, stat,iflag;
   unsigned short faflag;
 
   /* Define BLock Level */
@@ -112,11 +145,14 @@ rocDownload()
    *      TI_TRIGGER_TSREV2    4  Ribbon cable from Legacy TS module
    *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
    */
-#ifdef INTRANDOMPULSER
-  tiSetTriggerSource(TI_TRIGGER_PULSER);
-#else
-  tiSetTriggerSource(TI_TRIGGER_TSINPUTS);  //TS Inputs trigger;
-#endif
+  if(rocTriggerSource == 0)
+    {
+      tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+    }
+  else
+    {
+      tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+    }
 
   /* Enable set specific TS input bits (1-6) */
   tiEnableTSInput(TI_TSINPUT_1|TI_TSINPUT_2|TI_TSINPUT_3|TI_TSINPUT_4|TI_TSINPUT_5);
@@ -124,10 +160,9 @@ rocDownload()
   tiSetTriggerLatchOnLevel(1);
 
   /* Load the trigger table that associates
-   *  pins 21/22 | 23/24 | 25/26 : trigger1
-   *  pins 29/30 | 31/32 | 33/34 : trigger2
+   *    - TS#1,2,3,4,5,6 : Physics trigger,
    */
-  tiLoadTriggerTable(0);
+  tiLoadTriggerTable(3);
 
   // Lower deadtime trigger rules
   tiSetTriggerHoldoff(1,31,0);	// no more than 1 triggers in 31*16ns  -
@@ -171,6 +206,24 @@ rocDownload()
       c792GStatus(0);
     }
 
+#ifdef USE_FADC
+  /* FADC library init */
+  iflag = FA_INIT_SKIP;
+  faInit(FADC_ADDR, FADC_INCR, NFADC, iflag);
+
+  faGStatus(0);
+
+#endif
+
+#ifdef USE_VETROC
+  /* VETROC library init */
+  int vtflag = VETROC_NO_INIT; /* vxs sync-reset, trigger, clock */
+
+  vetrocInit((VETROC_SLOT<<19),(VETROC_SLOT_INCR<<19) , NVETROC, vtflag);
+
+  vetrocGStatus(0);
+#endif
+
   tiStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -182,13 +235,64 @@ rocDownload()
 void
 rocPrestart()
 {
-  int ivt;
+  int ivt,ifa;
   unsigned short vtflag;
 
+#ifdef USE_FADC
+ /*****************
+   *   FADC SETUP
+   *****************/
+
+  /* FADC Initialization flags */
+  int iflag = 0; /* NO SDC */
+  iflag |= (1<<0);  /* VXS sync-reset */
+  iflag |= FA_INIT_VXS_TRIG;  /* VXS trigger source */
+  iflag |= FA_INIT_VXS_CLKSRC;  /* VXS 250MHz Clock source */
+
+  fadcA32Base = 0x0b000000;
+
+  faInit(FADC_ADDR, FADC_INCR, NFADC, iflag);
+
+  /* Just one FADC250 */
+  if(nfadc == 1)
+    faDisableMultiBlock();
+  else
+    faEnableMultiBlock(1);
+
+  /* configure all modules based on config file */
+  FADC_READ_CONF_FILE;
+
+  for(ifa = 0; ifa < nfadc; ifa++)
+    {
+      /* Bus errors to terminate block transfers (preferred) */
+      faEnableBusError(faSlot(ifa));
+
+      /*trigger-related*/
+      faResetMGT(faSlot(ifa),1);
+      faSetTrigOut(faSlot(ifa), 7);
+
+      /* Enable busy output when too many events are being processed */
+      faSetTriggerBusyCondition(faSlot(ifa), 3);
+    }
+
+  sdSetActiveVmeSlots(faScanMask()); /* Tell the sd where to find the fadcs */
+
+  for(ifa=0; ifa < nfadc; ifa++)
+    {
+      faSoftReset(faSlot(ifa),0);
+      faResetToken(faSlot(ifa));
+      faResetTriggerCount(faSlot(ifa));
+      faEnableSyncReset(faSlot(ifa));
+    }
+
+#endif /* USE_FADC */
+
+
+
+#ifdef USE_VETROC
   /*****************
    *   VETROC SETUP
    *****************/
-#ifdef USE_VETROC
 
   /* 0 = software synch-reset, FP input 1, internal clock */
   //	vtflag = 0x20;  /* FP 1  0x020;  MAY NEED TO BE CHANGED*/
@@ -207,7 +311,8 @@ rocPrestart()
   printf("vetrocSlotMask=0x%08x\n", vetrocSlotMask);
 
   sdScanMask |= vetrocScanMask();
-  sdSetActiveVmeSlots(sdScanMask); /* Tell the sd where to find the vetrocs */
+
+  sdSetBusyVmeSlots(sdScanMask, 0); /* Set SD to accept Busy, no token passing */
 
   for(ivt=0; ivt<nvetroc; ivt++)
     {
@@ -224,10 +329,6 @@ rocPrestart()
 #endif
 
 #endif
-  /* Print status for all boards */
-#ifdef USE_VETROC
-  vetrocGStatus(0);
-#endif
 
   /* Setup ADCs (no sparcification, enable berr for block reads) */
   if(use792)
@@ -238,11 +339,12 @@ rocPrestart()
 	  c792Sparse(iadc,0,0);
 	  c792Clear(iadc);
 	  c792EnableBerr(iadc);
-      c792BitSet2(iadc, 1<<14);
-      c792EventCounterReset(iadc);
+	  c792BitSet2(iadc, 1<<14);
+	  c792EventCounterReset(iadc);
 	}
-      c792GStatus(0);
     }
+
+
 
 #ifdef TI_MASTER
   /* Set number of events per block (broadcasted to all connected TI Slaves)*/
@@ -250,8 +352,19 @@ rocPrestart()
   printf("rocPrestart: Block Level set to %d\n",blockLevel);
 #endif
 
+  /* Print status for all boards */
+  DALMAGO;
+#ifdef USE_VETROC
+  vetrocGStatus(0);
+#endif
+  if(use792)
+    c792GStatus(0);
+#ifdef USE_FADC
+  faGStatus(0);
+#endif
   sdStatus(0);
-  tiStatus(1);
+  tiStatus(0);
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -282,6 +395,29 @@ rocGo()
 	c792Enable(iadc);
     }
 
+#ifdef USE_FADC
+  int fadc_mode = 0;
+  unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
+
+  faGSetBlockLevel(blockLevel);
+
+  /* Get the FADC mode and window size to determine max data size */
+  faGetProcMode(faSlot(0), &fadc_mode, &pl, &ptw,
+		&nsb, &nsa, &np);
+
+  /* Set Max words from fadc (proc mode == 1 produces the most)
+     nfadc * ( Block Header + Trailer + 2  # 2 possible filler words
+               blockLevel * ( Event Header + Header2 + Timestamp1 + Timestamp2 +
+	                      nchan * (Channel Header + (WindowSize / 2) )
+             ) +
+     scaler readout # 16 channels + header/trailer
+   */
+  MAXFADCWORDS = nfadc * (4 + blockLevel * (4 + 16 * (1 + (ptw / 2))) + 18);
+
+  /*  Enable FADC */
+  faGEnable(0, 0);
+#endif
+
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 
 #ifdef TI_MASTER
@@ -309,19 +445,18 @@ rocEnd()
 {
 
 #ifdef TI_MASTER
-  /* Example: How to stop internal pulser trigger */
-#ifdef INTRANDOMPULSER
-  /* Disable random trigger */
-  tiDisableRandomTrigger();
-#elif defined (INTFIXEDPULSER)
-  /* Disable Fixed Rate trigger */
-  tiSoftTrig(1,0,700,0);
-#endif
-#endif
+  if(rocTriggerSource == 1)
+    {
+      /* Disable random trigger */
+      tiDisableRandomTrigger();
+    }
 
-  /* Print status for all boards */
-#ifdef USE_VETROC
-  vetrocGStatus(0);
+  if(rocTriggerSource == 2)
+    {
+      /* Disable Fixed Rate trigger */
+      tiSoftTrig(1,0,100,0);
+    }
+
 #endif
 
   if(use792)
@@ -331,11 +466,26 @@ rocEnd()
 	{
 	  c792Disable(iadc);
 	}
-      c792GStatus(0);
     }
 
+#ifdef USE_FADC
+ /* FADC Disable */
+  faGDisable(0);
+#endif /* USE_FADC */
+
+  /* Print status for all boards */
+  DALMAGO;
+#ifdef USE_VETROC
+  vetrocGStatus(0);
+#endif
+  if(use792)
+    c792GStatus(0);
+#ifdef USE_FADC
+  faGStatus(0);
+#endif
   sdStatus(0);
-  tiStatus(1);
+  tiStatus(0);
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -347,8 +497,9 @@ rocEnd()
 void
 rocTrigger(int arg)
 {
-  int ii, gbready, itime, read_stat, stat;
-  int ivt = 0, ifa, nwords_fa, nwords_vt, blockError, dCnt;
+  int ii, gbready, itime, read_stat, stat,nwords;
+  int ivt = 0, ifa=0, nwords_fa, nwords_vt, blockError=0, dCnt;
+  int roType =2;
   unsigned int val;
   unsigned int datascan, scanmask, roCount;
 
@@ -430,6 +581,52 @@ rocTrigger(int arg)
   BANKCLOSE;
 #endif
 
+#ifdef USE_FADC
+ /* fADC250 Readout */
+  BANKOPEN(FADC_BANK,BT_UI4,0);
+
+  /* Mask of initialized modules */
+  scanmask = faScanMask();
+  /* Check scanmask for block ready up to 100 times */
+  datascan = faGBlockReady(scanmask, 100);
+  stat = (datascan == scanmask);
+
+  if(stat)
+    {
+      if(nfadc == 1)
+	roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
+      nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
+
+      /* Check for ERROR in block read */
+      blockError = faGetBlockError(1);
+
+      if(blockError)
+	{
+	  daLogMsg("ERROR","fadc Slot %d: in transfer (event = %d), nwords = 0x%x\n",
+		 faSlot(ifa), roCount, nwords);
+
+	  for(ifa = 0; ifa < nfadc; ifa++)
+	    faResetToken(faSlot(ifa));
+
+	  if(nwords > 0)
+	    dma_dabufp += nwords;
+	}
+      else
+	{
+	  dma_dabufp += nwords;
+	  faResetToken(faSlot(0));
+	}
+    }
+  else
+    {
+      daLogMsg("ERROR","Event %d: fadc Datascan != Scanmask  (0x%08x != 0x%08x)\n",
+	     roCount, datascan, scanmask);
+    }
+  BANKCLOSE;
+#endif /* USE_FADC */
+
+
+
   if(use792)
     {
       unsigned int scanmask = 0, datascan = 0;
@@ -477,16 +674,111 @@ rocTrigger(int arg)
       BANKCLOSE;
     }
 
+  /* Check for SYNC Event */
+  if(tiGetSyncEventFlag() == 1)
+    {
+      /* Check for data available */
+      int davail = tiBReady();
+      if(davail > 0)
+	{
+	  daLogMsg("ERROR","TI Data available (%d) after readout in SYNC event \n",
+		 davail);
+
+	  while(tiBReady())
+	    {
+	      vmeDmaFlush(tiGetAdr32());
+	    }
+	}
+
+#ifdef USE_FADC
+      for(ifa = 0; ifa < nfadc; ifa++)
+	{
+	  davail = faBready(faSlot(ifa));
+	  if(davail > 0)
+	    {
+	      daLogMsg("ERROR", "fADC250 Data available (%d) after readout in SYNC event \n",
+		     davail);
+
+	      while(faBready(faSlot(ifa)))
+		{
+		  vmeDmaFlush(faGetA32(faSlot(ifa)));
+		}
+	    }
+	}
+#endif /* USE_FADC */
+
+#ifdef USE_VETROC
+      for(ivt = 0; ivt < nfadc; ivt++)
+	{
+	  davail = vetrocBready(vetrocSlot(ivt));
+	  if(davail > 0)
+	    {
+	      daLogMsg("ERROR", "VETROC slot %d Data available (%d) after readout in SYNC event \n",
+		       vetrocSlot(ivt), davail);
+
+	      while(vetrocBready(vetrocSlot(ivt)))
+	      	{
+	      	  vmeDmaFlush(vetrocGetA32(vetrocSlot(ivt)));
+	      	}
+	    }
+	}
+#endif /* USE_VETROC */
+    }
+
   /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
 
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
+void
 rocCleanup()
 {
+
+#ifdef USE_FADC
+  printf("%s: Reset all FADCs\n",__FUNCTION__);
+  faGReset(1);
+#endif /* USE_FADC */
+
 #ifdef TI_MASTER
   tiResetSlaveConfig();
+#endif
+  dalmaClose();
+
+}
+
+void
+rocSetTriggerSource(int source)
+{
+#ifdef TI_MASTER
+  if(TIPRIMARYflag == 1)
+    {
+      printf("%s: ERROR: Trigger Source already enabled.  Ignoring change to %d.\n",
+	     __func__, source);
+    }
+  else
+    {
+      rocTriggerSource = source;
+
+      if(rocTriggerSource == 0)
+	{
+	  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+	}
+      else
+	{
+	  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+	}
+
+      daLogMsg("INFO","Setting trigger source (%d)", rocTriggerSource);
+    }
+#else
+  printf("%s: ERROR: TI is not Master  Ignoring change to %d.\n",
+	 __func__, source);
 #endif
 }
 
