@@ -8,8 +8,8 @@
  */
 
 /* Event Buffer definitions */
-#define MAX_EVENT_POOL     400
-#define MAX_EVENT_LENGTH   1024*10      /* Size in Bytes */
+#define MAX_EVENT_POOL     100
+#define MAX_EVENT_LENGTH   1024*40      /* Size in Bytes */
 
 #ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */

@@ -2,14 +2,14 @@
  *
  *  bbhodo_list.c - Readout list for bigbite hodoscope
  *
- *     Readout 2 Caen 792 ADCs
+ *             6 FADC
  *             2 Caen 1190 TDCs
  *
  */
 
 /* Event Buffer definitions */
-#define MAX_EVENT_POOL     400
-#define MAX_EVENT_LENGTH   1024*10      /* Size in Bytes */
+#define MAX_EVENT_POOL     100
+#define MAX_EVENT_LENGTH   1024*40      /* Size in Bytes */
 
 #ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
@@ -28,25 +28,37 @@
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
-#include "c792Lib.h"
 #include "c1190Lib.h"
+
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
 
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
 #define BUFFERLEVEL 1
 
-/*
-  enable triggers (random or fixed rate) from internal pulser
- */
-/* #define INTRANDOMPULSER */
-/* #define INTFIXEDPULSER */
+#define USE_FADC 1
+#ifdef USE_FADC
+/* FADC Library Variables */
+#include "fadcLib.h"        /* library of FADC250 routines */
+#include "fadc250Config.h"
+extern int nfadc;
+extern unsigned int  fadcA32Base;
+#define NFADC     6
+/* Address of first fADC250 */
+#define FADC_ADDR (14<<19)
+/* Increment address to find next fADC250 */
+#define FADC_INCR (1<<19)
+#define FADC_BANK 250
 
-/* CAEN 792 specific definitions */
-#define C792_BANKID 792
-#define ADC_ID 0
-#define MAX_ADC_DATA 34
-extern int Nc792;
-
+#define FADC_READ_CONF_FILE {			\
+    fadc250Config("/home/sbs-onl/cfg/intelbbhodo.cnf");	\
+    if(rol->usrConfig)				\
+      fadc250Config(rol->usrConfig);		\
+  }
+/* for the calculation of maximum data words in the block transfer */
+unsigned int MAXFADCWORDS=0;
+#endif /* USE_FADC */
 
 /* CAEN 1190/1290 specific definitions */
 #define NUM_V1190 2
@@ -60,16 +72,20 @@ struct timespec last_time;
 #include "../scaler_server/scale32LibNew.c"
 #include "../scaler_server/linuxScalerLib.c"
 
-/* function prototype */
-void rocTrigger(int arg);
+/*
+  Global to configure the trigger source
+      0 : tsinputs
+      1 : TI random pulser
+      2 : TI fixed pulser
+
+  Set with rocSetTriggerSource(int source);
+*/
+int rocTriggerSource = 0;
+void rocSetTriggerSource(int source); // routine prototype
 
 void
 rocDownload()
 {
-  // FIXME: This is debug stuff.  remove when satisfied.
-  vmeSetQuietFlag(0);
-
-
   /* Define BLock Level */
   blockLevel = BLOCKLEVEL;
 
@@ -86,11 +102,15 @@ rocDownload()
    *      TI_TRIGGER_TSREV2    4  Ribbon cable from Legacy TS module
    *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
    */
-#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
-  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Pulser enabled */
-#else
-  tiSetTriggerSource(TI_TRIGGER_FPTRG); /* Front Panel TRG enabled */
-#endif
+
+  if(rocTriggerSource == 0)
+    {
+      tiSetTriggerSource(TI_TRIGGER_FPTRG); /* FP TRG enabled */
+    }
+  else
+    {
+      tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+    }
 
   /* Enable set specific TS input bits (1-6) */
   tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
@@ -112,18 +132,18 @@ rocDownload()
 
   tiSetSyncEventInterval(1000);
 
+#endif
   /* Set prompt trigger width to 100ns = (23 + 2) * 4ns */
   tiSetPromptTriggerWidth(23);
-#endif
 
   tiStatus(0);
+#ifdef USE_FADC
+  /* FADC library init */
+  faInit(FADC_ADDR, FADC_INCR, NFADC, FA_INIT_SKIP);
 
-  c792Init(0x200000,0x80000,2,0);
-  int iadc;
-  for(iadc = 0; iadc < Nc792; iadc++)
-    {
-      c792SetGeoAddress(iadc, iadc+4);
-    }
+  faGStatus(0);
+
+#endif
 
   if(useTDC_SCALERS > 0) {
     if(fadcscaler_init_crl()) {
@@ -141,6 +161,7 @@ rocDownload()
 void
 rocPrestart()
 {
+  int ifa;
 
   /* Suspend scaler task */
   if(useTDC_SCALERS > 0) {
@@ -155,48 +176,90 @@ rocPrestart()
 
   tiStatus(0);
 
-  /* Program/Init VME Modules Here */
-  /* Setup ADCs (no sparcification, enable berr for block reads) */
-  int iadc;
-  for(iadc = 0; iadc < Nc792; iadc++)
-    {
-      c792Sparse(iadc,0,0);
-      c792Clear(iadc);
-      c792EnableBerr(iadc);
-      c792BitSet2(iadc, 1<<14);
-      c792EventCounterReset(iadc);
-    }
-  c792GStatus(0);
+#ifdef USE_FADC
+ /*****************
+   *   FADC SETUP
+   *****************/
 
-  int itdc;
+  /* FADC Initialization flags */
+  int iflag = 0xea00;  /* FASDC address */
+  iflag |= FA_INIT_EXT_SYNCRESET;
+  iflag |= FA_INIT_FP_TRIG;
+  iflag |= FA_INIT_FP_CLKSRC;
+
+  fadcA32Base = 0x0a000000;
+
+  faInit(FADC_ADDR, FADC_INCR, NFADC, iflag);
+
+  /* Disable multiblock when using faSDC */
+  faDisableMultiBlock();
+
+  /* configure all modules based on config file */
+  FADC_READ_CONF_FILE;
+
+  for(ifa = 0; ifa < nfadc; ifa++)
+    {
+      /* Bus errors to terminate block transfers (preferred) */
+      faEnableBusError(faSlot(ifa));
+
+      /*trigger-related*/
+      faResetMGT(faSlot(ifa),1);
+      faSetTrigOut(faSlot(ifa), 7);
+
+      /* Enable busy output when too many events are being processed */
+      faSetTriggerBusyCondition(faSlot(ifa), 3);
+    }
+
+  for(ifa=0; ifa < nfadc; ifa++)
+    {
+      faSoftReset(faSlot(ifa),0);
+      faResetTriggerCount(faSlot(ifa));
+      faEnableSyncReset(faSlot(ifa));
+    }
+
+  faSDC_Config(2,0x3F); // with all signals hooked up (trig,clk,sync,busy)
+
+  faSDC_Status(0);
+
+  // SYNC IS ISSUED FROM TI - BM 26sept2021
+  //  faSDC_Sync();
+
+#endif /* USE_FADC */
+   int itdc;
 
   /* INIT C1190/C1290 - Must be A32 for 2eSST */
   UINT32 list[NUM_V1190] = {0x100000,0x180000};
 
   tdc1190InitList(list,NUM_V1190,2);
 
-  unsigned int mcstaddr = 0x0a000000;
+  unsigned int mcstaddr = 0x09000000;
   if(C1190_ROMODE==0)  tdc1190InitMCST(mcstaddr);
   tdc1190GSetTriggerMatchingMode();
   tdc1190GSetEdgeResolution(100);
   tdc1190GSetEdgeDetectionConfig(3);
   tdc1190GSetWindowWidth(550); // ns
- tdc1190GSetWindowOffset(-600); // ns
- tdc1190GEnableTriggerTimeSubtraction(); // Uses the beginning of the match window instead of the latest bunch reset
+  tdc1190GSetWindowOffset(-300); // ns
+  tdc1190GEnableTriggerTimeSubtraction(); // Uses the beginning of the match window instead of the latest bunch reset
 
- tdc1190GTriggerTime(1); // flag = 1 enable (= 0 disable) writing out of the Extended Trigger Time Tag in the output buffer.
-tdc1190ConfigureGReadout(C1190_ROMODE);
+  tdc1190GTriggerTime(1); // flag = 1 enable (= 0 disable) writing out of the Extended Trigger Time Tag in the output buffer.
+  tdc1190ConfigureGReadout(C1190_ROMODE);
   for(itdc=0; itdc<NUM_V1190; itdc++)
     {
       tdc1190SetTriggerMatchingMode(itdc);
       tdc1190SetEdgeResolution(itdc,100);
       tdc1190SetEdgeDetectionConfig(itdc,3);
-  tdc1190SetWindowWidth(itdc,450); // ns
- tdc1190SetWindowOffset(itdc,-500); // ns
-     tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
+      tdc1190SetWindowWidth(itdc,2000); // ns
+      tdc1190SetWindowOffset(itdc,-2000); // ns
+      tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
     }
 
+  DALMAGO;
+#ifdef USE_FADC
+  faGStatus(0);
+#endif
   tdc1190GStatus(1);
+  tiStatus(0);
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -205,6 +268,8 @@ tdc1190ConfigureGReadout(C1190_ROMODE);
 void
 rocGo()
 {
+  int fadc_mode = 0;
+  unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
   tiSetBlockLimit(0);
   /* Print out the Run Number and Run Type (config id) */
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
@@ -214,35 +279,53 @@ rocGo()
   blockLevel = tiGetCurrentBlockLevel();
   printf("rocGo: Block Level set to %d\n",blockLevel);
 
-  /* Enable/Set Block Level on modules, if needed, here */
-  int iadc;
-  for(iadc = 0; iadc < Nc792; iadc++)
-    c792Enable(iadc);
+#ifdef USE_FADC
+  faGSetBlockLevel(blockLevel);
+
+  /* Get the FADC mode and window size to determine max data size */
+  faGetProcMode(faSlot(0), &fadc_mode, &pl, &ptw,
+		&nsb, &nsa, &np);
+
+  /* Set Max words from fadc (proc mode == 1 produces the most)
+     nfadc * ( Block Header + Trailer + 2  # 2 possible filler words
+               blockLevel * ( Event Header + Header2 + Timestamp1 + Timestamp2 +
+	                      nchan * (Channel Header + (WindowSize / 2) )
+             ) +
+     scaler readout # 16 channels + header/trailer
+   */
+  MAXFADCWORDS = nfadc * (4 + blockLevel * (4 + 16 * (1 + (ptw / 2))) + 18);
+  faGStatus(0);
+
+  /*  Enable FADC */
+  faGEnable(0, 0);
+#endif
 
 
   tdc1190GSetBLTEventNumber(blockLevel);
 
 #ifdef TI_MASTER
-#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
-  printf("************************************************************\n");
-  printf("%s: TI Configured for Internal Pulser Triggers\n",
-	 __func__);
-  printf("************************************************************\n");
-#endif
+  if(rocTriggerSource != 0)
+    {
+      printf("************************************************************\n");
+      daLogMsg("INFO","TI Configured for Internal Pulser Triggers");
+      printf("************************************************************\n");
 
-  /* Example: How to start internal pulser trigger */
-#ifdef INTRANDOMPULSER
-  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-  tiSetRandomTrigger(1,0x7);
-#elif defined (INTFIXEDPULSER)
-  /*
-    Enable fixed rate with period (ns)
-    120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
-     - arg2 = 0xffff - Continuous
-     - arg2 < 0xffff = arg2 times
-  */
-  tiSoftTrig(1,0xffff,700,0);
-#endif
+      if(rocTriggerSource == 1)
+	{
+	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
+	  tiSetRandomTrigger(1,7);
+	}
+
+      if(rocTriggerSource == 2)
+	{
+	  /*    Enable fixed rate with period (ns)
+		120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
+		- arg2 = 0xffff - Continuous
+		- arg2 < 0xffff = arg2 times
+	  */
+	  tiSoftTrig(1,0xffff,100,0);
+	}
+    }
 #endif
 
   if (useTDC_SCALERS>0) {
@@ -259,26 +342,33 @@ rocEnd()
 {
 
 #ifdef TI_MASTER
-  /* Example: How to stop internal pulser trigger */
-#ifdef INTRANDOMPULSER
-  /* Disable random trigger */
-  tiDisableRandomTrigger();
-#elif defined (INTFIXEDPULSER)
-  /* Disable Fixed Rate trigger */
-  tiSoftTrig(1,0,700,0);
-#endif
-#endif
-
-  int iadc;
-  for(iadc = 0; iadc < Nc792; iadc++)
+  if(rocTriggerSource == 1)
     {
-      c792Disable(iadc);
+      /* Disable random trigger */
+      tiDisableRandomTrigger();
     }
-  c792GStatus(0);
 
+  if(rocTriggerSource == 2)
+    {
+      /* Disable Fixed Rate trigger */
+      tiSoftTrig(1,0,100,0);
+    }
+
+#endif
+
+#ifdef USE_FADC
+  /* FADC Disable */
+  faGDisable(0);
+#endif
+
+  DALMAGO;
   tdc1190GStatus(0);
+#ifdef USE_FADC
+  faGStatus(0);
+#endif
 
   tiStatus(0);
+  DALMASTOP;
 
   if(useTDC_SCALERS) {
     disable_scalers();
@@ -292,7 +382,11 @@ rocEnd()
 void
 rocTrigger(int arg)
 {
-  int dCnt;
+  int ifa = 0, stat, nwords, dCnt;
+  unsigned int datascan=0, scanmask=0;
+  int roType = 2, roCount = 0, blockError = 0;
+
+  roCount = tiGetIntCount();
 
   /* Set TI output 1 high for diagnostics */
   tiSetOutputPort(1,0,0,0);
@@ -303,17 +397,66 @@ rocTrigger(int arg)
 
   if(dCnt<=0)
     {
-      printf("No TI Trigger data or error.  dCnt = %d\n",dCnt);
+      daLogMsg("ERROR","No TI Trigger data or error.  event = %d\n",
+	       tiGetIntCount());
     }
   else
     { /* TI Data is already in a bank structure.  Bump the pointer */
       dma_dabufp += dCnt;
     }
 
-  unsigned int scanmask = 0, datascan = 0;
+
+#ifdef USE_FADC
+ /* fADC250 Readout */
+  BANKOPEN(FADC_BANK,BT_UI4,blockLevel);
+
+  /* Mask of initialized modules */
+  scanmask = faScanMask();
+  /* Check scanmask for block ready up to 100 times */
+  datascan = faGBlockReady(scanmask, 100);
+  stat = (datascan == scanmask);
+
+  if(stat == 0)
+    {
+      daLogMsg("ERROR","Event %d: fadc Datascan != Scanmask  (0x%08x != 0x%08x)\n",
+	     roCount, datascan, scanmask);
+    }
+
+  if(datascan)
+    {
+      for(ifa = 0; ifa < nfadc; ifa++)
+	{
+	  if( ((1 << faSlot(ifa)) & datascan) == 0)
+	    continue;
+
+	  vmeDmaConfig(2,5,1);
+
+	  nwords = faReadBlock(faSlot(ifa), dma_dabufp, MAXFADCWORDS, 1);
+
+	  /* Check for ERROR in block read */
+	  blockError = faGetBlockError(1);
+
+	  if(blockError)
+	    {
+	      daLogMsg("ERROR","fadc Slot %d: in transfer (event = %d), nwords = 0x%x\n",
+		       faSlot(ifa), roCount, nwords);
+
+	      if(nwords > 0)
+		dma_dabufp += nwords;
+	    }
+	  else
+	    {
+	      dma_dabufp += nwords;
+	    }
+	}
+    }
+
+  BANKCLOSE;
+#endif
 
   BANKOPEN(C1190_BANKID,BT_UI4,blockLevel);
   /* Check for valid data here */
+  scanmask = tdc1190ScanMask();
   datascan = tdc1190GBlockReady(scanmask, BLOCKLEVEL, 1000);
 
   if(datascan==scanmask)
@@ -330,7 +473,7 @@ rocTrigger(int arg)
 
       if(dCnt < 0)
 	{
-	  printf("ERROR: in c1190 transfer (event = %d), status = 0x%x\n",
+	  daLogMsg("ERROR","c1190 error in transfer (event = %d), status = 0x%x\n",
 		 tiGetIntCount(),dCnt);
 	  *dma_dabufp++ = LSWAP(0xda000bad);
 	}
@@ -354,55 +497,11 @@ rocTrigger(int arg)
     }
   else
     {
-      printf("ERROR: Data not ready in event %d.. 0x%08x != 0x%08x\n",
+      daLogMsg("ERROR","c1190 Data not ready in event %d.. 0x%08x != 0x%08x\n",
 	     tiGetIntCount(), datascan, scanmask);
       *dma_dabufp++ = LSWAP(datascan);
       *dma_dabufp++ = LSWAP(scanmask);
       *dma_dabufp++ = LSWAP(0xda000bad);
-    }
-  BANKCLOSE;
-
-  int iadc;
-
-  vmeDmaConfig(1,2,0);
-
-  /* Check if an Event is available */
-  scanmask = c792ScanMask();
-  datascan = c792GDReady(scanmask, 1000);
-
-  BANKOPEN(C792_BANKID,BT_UI4,blockLevel);
-  if(datascan==scanmask)
-    {
-      for(iadc = 0; iadc < Nc792; iadc++)
-	{
-	  dCnt = c792ReadBlock(iadc,dma_dabufp,MAX_ADC_DATA+40);
-	  if(dCnt <= 0)
-	    {
-	      logMsg("%4d: ERROR: ADC %2d Read Failed - Status 0x%x\n",
-		     tiGetIntCount(),
-		     iadc, dCnt,0,0,0,0);
-	      *dma_dabufp++ = LSWAP(iadc);
-	      *dma_dabufp++ = LSWAP(0xda00bad1);
-	      c792Clear(iadc);
-	    }
-	  else
-	    {
-	      dma_dabufp += dCnt;
-	    }
-	}
-
-    }
-  else
-    {
-      logMsg("%4d: ERROR: datascan != scanmask for ADC  (0x%08x != 0x%08x)\n",
-	     tiGetIntCount(),
-	     datascan,scanmask,0,0,0,0);
-      *dma_dabufp++ = LSWAP(datascan);
-      *dma_dabufp++ = LSWAP(scanmask);
-      *dma_dabufp++ = LSWAP(0xda00bad2);
-
-      for(iadc = 0; iadc < Nc792; iadc++)
-	c792Clear(iadc);
     }
   BANKCLOSE;
 
@@ -413,7 +512,7 @@ rocTrigger(int arg)
       int davail = tiBReady();
       if(davail > 0)
 	{
-	  printf("%4d: ERROR: TI Data available (%d) after readout! \n",
+	  daLogMsg("ERROR","%4d: TI Data available (%d) after readout! \n",
 		 tiGetIntCount(), davail);
 
 	  while(tiBReady())
@@ -422,12 +521,37 @@ rocTrigger(int arg)
 	    }
 	}
 
+#ifdef USE_FADC
+      for(ifa = 0; ifa < nfadc; ifa++)
+	{
+	  davail = faBready(faSlot(ifa));
+	  if(davail > 0)
+	    {
+	      daLogMsg("ERROR", "fADC250 Data available (%d) after readout in SYNC event (%d)\n",
+		     davail, tiGetIntCount());
+
+	      while(faBready(faSlot(ifa)))
+		{
+		  vmeDmaFlush(faGetA32(faSlot(ifa)));
+		}
+	    }
+	}
+#endif
+
       /* Check for ANY data in 1190 TDCs */
       datascan = tdc1190GDready(1);
+      static int max_complaints = 10;
+      static int complaints = 0;
       if(datascan > 0)
 	{
-	  printf("%4d: ERROR: C1190 Data available (0x%x) after readout!\n",
-		 tiGetIntCount(), datascan);
+	  if(++complaints < max_complaints)
+	    daLogMsg("ERROR","%4d: C1190 Data available (0x%x) after readout! %d\n",
+		     tiGetIntCount(), datascan, complaints);
+
+	  if(complaints == max_complaints)
+	    daLogMsg("ERROR","%4d: C1190 Data available (0x%x) after readout! MAX SHOWN\n",
+		     tiGetIntCount(), datascan);
+
 	  int itdc;
 	  for(itdc = 0; itdc < 32; itdc++)
 	    {
@@ -438,37 +562,67 @@ rocTrigger(int arg)
 	    }
 	}
 
-      /* Check for ANY data in 792 ADCs */
-      for(iadc = 0; iadc < Nc792; iadc++)
-	{
-	  datascan = c792Dready(iadc);
-	  if(datascan)
-	    {
-	      printf("%4d: ERROR: C792 Data availble (%d) after readout!\n",
-		     tiGetIntCount(), datascan);
-	      c792Clear(iadc);
-	    }
-
-	}
-
     }
-      /* Set TI output 0 low */
+
+  /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
 
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
+void
 rocCleanup()
 {
+#ifdef USE_FADC
+  printf("%s: Reset all FADCs\n",__FUNCTION__);
+  faGReset(1);
+#endif
 
 #ifdef TI_MASTER
   tiResetSlaveConfig();
+#endif
+  dalmaClose();
+
+}
+
+void
+rocSetTriggerSource(int source)
+{
+#ifdef TI_MASTER
+  if(TIPRIMARYflag == 1)
+    {
+      printf("%s: ERROR: Trigger Source already enabled.  Ignoring change to %d.\n",
+	     __func__, source);
+    }
+  else
+    {
+      rocTriggerSource = source;
+
+      if(rocTriggerSource == 0)
+	{
+	  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+	}
+      else
+	{
+	  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+	}
+
+      daLogMsg("INFO","Setting trigger source (%d)", rocTriggerSource);
+    }
+#else
+  printf("%s: ERROR: TI is not Master  Ignoring change to %d.\n",
+	 __func__, source);
 #endif
 }
 
 
 /*
   Local Variables:
-  compile-command: "make -k -B bbhodo_list.so bbhodo_slave_list.so"
+  compile-command: "make -k -B bbhodo_scalers_list.so bbhodo_scalers_slave_list.so"
   End:
  */
