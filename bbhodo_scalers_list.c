@@ -24,7 +24,7 @@
 #define TI_ADDR    (21 << 19)
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x10
+#define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
@@ -133,7 +133,7 @@ rocDownload()
     }
     set_runstatus(0);
   }
-  
+
   printf("rocDownload: User Download Executed\n");
 
 }
@@ -180,8 +180,8 @@ rocPrestart()
   tdc1190GSetTriggerMatchingMode();
   tdc1190GSetEdgeResolution(100);
   tdc1190GSetEdgeDetectionConfig(3);
-  tdc1190GSetWindowWidth(450); // ns
- tdc1190GSetWindowOffset(-500); // ns
+  tdc1190GSetWindowWidth(550); // ns
+ tdc1190GSetWindowOffset(-600); // ns
  tdc1190GEnableTriggerTimeSubtraction(); // Uses the beginning of the match window instead of the latest bunch reset
 
  tdc1190GTriggerTime(1); // flag = 1 enable (= 0 disable) writing out of the Extended Trigger Time Tag in the output buffer.
@@ -250,7 +250,7 @@ rocGo()
     printf("tdc scalers cleared\n");
     enable_scalers();
   }
-  
+
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 }
 
@@ -344,6 +344,7 @@ rocTrigger(int arg)
 		 + ((double)now.tv_nsec - (double)last_time.tv_nsec)/1000000000L)
 		>= scaler_period) {
 	      read_tdc_scalers(0,0); /* Update scaler server */
+	      read_ti_scalers(0,0);
 	      last_time = now;
 	      read_clock_channels(); /* Make sure clock updates */
 	    }

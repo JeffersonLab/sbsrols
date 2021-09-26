@@ -24,7 +24,7 @@
 #define TI_ADDR    (21 << 19)
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x10
+#define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
@@ -159,8 +159,8 @@ rocPrestart()
   tdc1190GSetTriggerMatchingMode();
   tdc1190GSetEdgeResolution(100);
   tdc1190GSetEdgeDetectionConfig(3);
-  tdc1190GSetWindowWidth(450); // ns
- tdc1190GSetWindowOffset(-500); // ns
+  tdc1190GSetWindowWidth(550); // ns
+ tdc1190GSetWindowOffset(-300); // ns
  tdc1190GEnableTriggerTimeSubtraction(); // Uses the beginning of the match window instead of the latest bunch reset
 
  tdc1190GTriggerTime(1); // flag = 1 enable (= 0 disable) writing out of the Extended Trigger Time Tag in the output buffer.
@@ -170,8 +170,8 @@ tdc1190ConfigureGReadout(C1190_ROMODE);
       tdc1190SetTriggerMatchingMode(itdc);
       tdc1190SetEdgeResolution(itdc,100);
       tdc1190SetEdgeDetectionConfig(itdc,3);
-  tdc1190SetWindowWidth(itdc,450); // ns
- tdc1190SetWindowOffset(itdc,-500); // ns
+  tdc1190SetWindowWidth(itdc,2000); // ns
+ tdc1190SetWindowOffset(itdc,-2000); // ns
      tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
     }
 
@@ -361,6 +361,7 @@ rocTrigger(int arg)
     }
   BANKCLOSE;
 
+#ifdef SYNCCHECK
   /* Check for SYNC Event or Bufferlevel == 1 */
   if((tiGetSyncEventFlag() == 1) || (tiGetBlockBufferLevel() == 1))
     {
@@ -383,6 +384,7 @@ rocTrigger(int arg)
 	{
 	  printf("%4d: ERROR: C1190 Data available (0x%x) after readout!\n",
 		 tiGetIntCount(), datascan);
+	  tiSetBlockLimit(3);
 	  int itdc;
 	  for(itdc = 0; itdc < 32; itdc++)
 	    {
@@ -407,6 +409,8 @@ rocTrigger(int arg)
 	}
 
     }
+
+#endif /* SYNCCHECK */
       /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
 
