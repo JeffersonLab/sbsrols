@@ -30,8 +30,11 @@
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
 #include "sdLib.h"
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
 /* Define buffering level */
-#define BUFFERLEVEL 10
+#define BUFFERLEVEL 5
 
 /****************************************
  *  DOWNLOAD
@@ -52,9 +55,6 @@ rocDownload()
 
   vmeDmaConfig(2,5,1);
 
-  /* Define BLock Level variable to a default */
-  blockLevel = 1;
-
 
   /*****************
    *   TI SETUP
@@ -67,6 +67,15 @@ rocDownload()
       sdSetActiveVmeSlots(0);
       sdStatus(0);
     }
+
+  tiSetTriggerPulse(1,0,25,0);
+
+  /*
+    Increase the OT#2 width for the MPD input trigger
+    8 -> (8 + 2) * 4ns = 40ns
+  */
+  /* Set prompt output width (100 + 2) * 4 = 408 ns */
+  tiSetPromptTriggerWidth(127);
 
   tiStatus(0);
 
@@ -81,19 +90,9 @@ void
 rocPrestart()
 {
 
+  DALMAGO;
   tiStatus(0);
-
-  /* EXAMPLE: User bank of banks added to prestart event */
-  UEOPEN(500,BT_BANK,0);
-
-  /* EXAMPLE: Bank of data in User Bank 500 */
-  CBOPEN(1,BT_UI4,0);
-  *rol->dabufp++ = 0x11112222;
-  *rol->dabufp++ = 0x55556666;
-  *rol->dabufp++ = 0xaabbccdd;
-  CBCLOSE;
-
-  UECLOSE;
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -128,9 +127,9 @@ rocGo()
 void
 rocEnd()
 {
-
+  DALMAGO;
   tiStatus(0);
-
+  DALMASTOP;
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
 }
@@ -149,16 +148,13 @@ rocTrigger(int evntno)
 
   /* Check if this is a Sync Event */
   stat = tiGetSyncEventFlag();
-  if(stat) {
-    printf("rocTrigger: Got Sync Event!! Block # = %d\n",evntno);
-  }
 
   /* Readout the trigger block from the TI
      Trigger Block MUST be readout first */
   dCnt = tiReadTriggerBlock(dma_dabufp);
   if(dCnt<=0)
     {
-      printf("No data or error.  dCnt = %d\n",dCnt);
+      printf("No TI Trigger data or error.  dCnt = %d\n",dCnt);
     }
   else
     { /* TI Data is already in a bank structure.  Bump the pointer */
@@ -166,31 +162,14 @@ rocTrigger(int evntno)
     }
 
 
-  /* EXAMPLE: How to open a bank (name=5, type=ui4) and add data words by hand */
-  BANKOPEN(5,BT_UI4,blockLevel);
-  *dma_dabufp++ = tiGetIntCount();
-  *dma_dabufp++ = 0xdead;
-  *dma_dabufp++ = 0xcebaf111;
-  *dma_dabufp++ = 0xcebaf222;
-
-  for (ii=1;ii<=MAX_WORDS;ii++) {
-    *dma_dabufp++ = ii;
-  }
-  BANKCLOSE;
-
   /* Check for sync Event */
-  if(tiGetSyncEventFlag()) {
-    /* Set new block level if it has changed */
-    idata = tiGetCurrentBlockLevel();
-    if((idata != blockLevel)&&(idata<255)) {
-      blockLevel = idata;
-      printf("rocTrigger: Block Level changed to %d\n",blockLevel);
+  if(tiGetSyncEventFlag())
+    {
+      printf("%s: Got Sync Event!! Block # = %d\n",
+	     __func__,evntno);
+      /* Clear/Update Modules here */
+
     }
-
-    /* Clear/Update Modules here */
-
-  }
-
 
 
   /* Set TI output 0 low */
@@ -199,9 +178,15 @@ rocTrigger(int evntno)
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+void
 rocCleanup()
 {
 
   printf("%s: Reset all Modules\n",__FUNCTION__);
+  dalmaClose();
 
 }

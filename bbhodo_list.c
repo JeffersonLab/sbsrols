@@ -126,9 +126,9 @@ rocDownload()
 
   tiSetSyncEventInterval(1000);
 
+#endif
   /* Set prompt trigger width to 100ns = (23 + 2) * 4ns */
   tiSetPromptTriggerWidth(23);
-#endif
 
   tiStatus(0);
 #ifdef USE_FADC
