@@ -18,11 +18,11 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= bbhodo_list.so bbhodo_slave_list.so tdc1190_list.so \
-	c792_list.so ti_master_list.so \
+VMEROL	= bbhodo_list.so bbhodo_slave_list.so \
+	ti_master_list.so ti_slave_list.so \
 	bbhodo_scalers_list.so bbhodo_scalers_slave_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -lc1190 -lc792 -lsd -lts
+ROLLIBS			= -lc1190 -lc792 -lsd -lts -lfadc -ldalmaRol
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -40,7 +40,7 @@ CC			= gcc
 AR                      = ar
 RANLIB                  = ranlib
 ifdef DEBUG
-CFLAGS			= -Wall -g
+CFLAGS			= -Wall -Wno-unused -g
 else
 CFLAGS			= -O3
 endif
@@ -81,10 +81,6 @@ event_list.so: event_list.c
 	@echo " CC     $@"
 	${Q}${CC} ${CODA_CFLAGS} -o $@ $<
 
-test_list_v3.so: test_list_v3.c
-	@echo " CC     $@"
-	${Q}${CC} ${CODA_CFLAGS} -o $@ $<
-
 %.so: %.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
@@ -105,14 +101,6 @@ bbhodo_scalers_slave_list.so: bbhodo_scalers_list.c ../scaler_server/shmLib.o ..
 bbhodo_scalers_list.so: bbhodo_scalers_list.c ../scaler_server/shmLib.o ../scaler_server/linuxScalerLib.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll)  ../scaler_server/shmLib.o -o $@ $<
-
-blah_slave_list.so: blah_list.c
-	@echo " CC     $@"
-	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
-
-blah_list.so: blah_list.c
-	@echo " CC     $@"
-	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
 clean distclean:
 	${Q}rm -f  $(VMEROL) $(SOBJS) $(CFILES) *~ $(DEPS) $(DEPS) *.d.*
