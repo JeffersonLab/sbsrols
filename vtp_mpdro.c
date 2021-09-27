@@ -13,14 +13,9 @@
 #include "mpdConfig.h"
 #include "vtpMpdConfig.h"
 
-/////// WARNING ::: 25 sept 2021 ::: PEDESTAL_FILENAME format was changed ////1////
-
-#define PEDESTAL_FILENAME    "/home/sbs-onl/cfg/pedestals/daq_ped_bb_gem_run10363.dat"
-#define COMMON_MODE_FILENAME "/home/sbs-onl/cfg/pedestals/CommonModeRange_bb_gem_run10363.txt"
-
-
-/////// WARNING ::: 25 sept 2021 ::: COMMON_MODE_FILENAME format was changed //
-///////
+// These are now defined in the config file
+//   e.g. ~/vtp/cfg/sbsvtp3.config
+char COMMON_MODE_FILENAME[250], PEDESTAL_FILENAME[250];
 
 /*
   Global to configure pedestal subtraction mode
@@ -102,28 +97,8 @@ void vtp_mpd_setup()
     ++vtpFiberBit;
   }
 
-  int build_all_samples = 1;
-  //1 => For pedestal run, will write ADC samples from the APV (i.e. disable zero suppression)
-  //0 => will apply the threshold and peak position logic to decide if data is written to the event (i.e. zero suppression enabled)
-
-  int build_debug_headers = 1;
-  //1 => will write extra debugging info headers about the common-mode processing (which APV chip reported data, avg A/B values and counts for each APV)
-  //0 => disables extra debug info headers
-  int enable_cm = 0;
-  //1 => enables the common-mode subtraction logic
-  //0 => disables the common-mode subtraction logic (so raw ADC samples only have the channel offset applied)
-  int noprocessing_prescale = 9;
-  //0 => prescaling disabled (all events are processed)
-  //1-65535 => every Nth event has common-mode subtract and zero suppression disabled
-  int allow_peak_any_time = 1;
-  //0 => strip ADC peak sample must be neither first or last sample
-  //1 => strip ADC peak sample can be at any time sample
-  int min_avg_samples = 20;
-  //minimum number of samples for a single APV frame that must fall within pedestal averaging region for common-mode to be applied. If less than this number are found in average, then common-mode will be disabled for that APV for all time ssamples of that event and a flag will be reported indicating this so offline can know it needs to perform the correction.
-
-  vtpMpdEbSetFlags(build_all_samples, build_debug_headers,
-		   enable_cm, noprocessing_prescale, allow_peak_any_time,
-                   min_avg_samples);
+  vtpGetCommonModeFilename(COMMON_MODE_FILENAME);
+  vtpGetPedestalFilename(PEDESTAL_FILENAME);
 
   //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
   int apvId, cModeMin, cModeMax, cModeRocId, cModeSlot;
