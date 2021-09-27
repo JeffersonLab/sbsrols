@@ -13,8 +13,14 @@
 #include "mpdConfig.h"
 #include "vtpMpdConfig.h"
 
-#define PEDESTAL_FILENAME    "/home/sbs-onl/cfg/CommonModeRange_220.txt"
-#define COMMON_MODE_FILENAME "/home/sbs-onl/cfg/gem_ped_220.dat"
+/////// WARNING ::: 25 sept 2021 ::: PEDESTAL_FILENAME format was changed ////1////
+
+#define PEDESTAL_FILENAME    "/home/sbs-onl/cfg/pedestals/daq_ped_bb_gem_run10363.dat"
+#define COMMON_MODE_FILENAME "/home/sbs-onl/cfg/pedestals/CommonModeRange_bb_gem_run10363.txt"
+
+
+/////// WARNING ::: 25 sept 2021 ::: COMMON_MODE_FILENAME format was changed //
+///////
 
 /*
   Global to configure pedestal subtraction mode
@@ -120,7 +126,7 @@ void vtp_mpd_setup()
                    min_avg_samples);
 
   //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
-  int apvId, cModeMin, cModeMax, cModeRocId;
+  int apvId, cModeMin, cModeMax, cModeRocId, cModeSlot;
   int fiberID = -1, last_mpdSlot = -1;
   FILE *fcommon   = fopen(COMMON_MODE_FILENAME,"r");
 
@@ -145,7 +151,7 @@ void vtp_mpd_setup()
   int stripNo;
   float ped_offset, ped_rms;
   char buf[10];
-  int i1, i2, i3, n;
+  int i1, i2, i3, i4, n;
   char *line_ptr = NULL;
   size_t line_len;
   fiberID = -1, last_mpdSlot = -1;
@@ -173,12 +179,12 @@ void vtp_mpd_setup()
       {
 	getline(&line_ptr, &line_len, fpedestal);
 
-	n = sscanf(line_ptr, "%10s %d %d %d", buf, &i1, &i2, &i3);
-	if( (n == 4) && !strcmp("APV", buf))
+	n = sscanf(line_ptr, "%10s %d %d %d %d", buf, &i1, &i2, &i3, &i4);
+	if( (n == 5) && !strcmp("APV", buf))
           {
             cModeRocId = i1;
-            fiberID = i2;
-            apvId = i3;
+            fiberID = i3;
+            apvId = i4;
             continue;
           }
 
@@ -207,23 +213,24 @@ void vtp_mpd_setup()
     printf("no commonMode file\n");
   }else{
     printf("trying to read commonMode\n");
-    while(fscanf(fcommon, "%d %d %d %d %d", &cModeRocId, &fiberID, &apvId, &cModeMin, &cModeMax)==5){
-      printf("fiberID %d %d %d %d %d \n", cModeRocId, fiberID, apvId, cModeMin, cModeMax);
-
-      //	  cModeMin = 200;
-      //	  cModeMax = 800;
-      //	  cModeMin = 0;
-      //	  cModeMax = 4095;
-
-      // if settings are for us
-      if(cModeRocId != ROCID)
+    while(fscanf(fcommon, "%d %d %d %d %d %d", &cModeRocId, &cModeSlot, &fiberID, &apvId, &cModeMin, &cModeMax)==6)
       {
-        printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
-        continue;
-      }
+	printf("fiberID %d %d %d %d %d %d \n", cModeRocId, cModeSlot, fiberID, apvId, cModeMin, cModeMax);
 
-      vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
-    }
+	//	  cModeMin = 200;
+	//	  cModeMax = 800;
+	//	  cModeMin = 0;
+	//	  cModeMax = 4095;
+
+	// if settings are for us
+	if(cModeRocId != ROCID)
+	  {
+	    printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+	    continue;
+	  }
+
+	vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
+      }
     fclose(fcommon);
   }
 
