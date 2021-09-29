@@ -92,10 +92,14 @@ vtp_mpd_setup()
   vtpInitGlobals();
 
   if(rol->usrString)
-    vtpConfig(rol->usrString);
+    {
+      vtpConfig(rol->usrString);
+    }
   else
-    vtpConfig(vtpConfigFilename);
-
+    {
+      vtpConfig(vtpConfigFilename);
+      strcpy(rol->usrString, vtpConfigFilename);
+    }
 
   vtpMpdGetCommonModeFilename(COMMON_MODE_FILENAME);
   vtpMpdGetPedestalFilename(PEDESTAL_FILENAME);
@@ -539,6 +543,7 @@ vtpMpdPrestart()
 {
   // Setup in Prestart since TI clock glitches at end of Download()
   vtp_mpd_setup();
+
 
 }
 

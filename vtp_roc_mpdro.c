@@ -230,6 +230,13 @@ rocPrestart()
   rocStatus();
   vtpMpdApvConfigStatus();
 
+  unsigned int ubuf[10000];
+  unsigned int uetype = 137;
+  vtpRocFile2Event(rol->usrString,
+		   (unsigned char *)&ubuf[0],uetype,40000);
+  /* Send a User Event - read in a File */
+  vtpRocEvioWriteUserEvent(ubuf);
+
   printf(" Done with User Prestart\n");
 
 }
