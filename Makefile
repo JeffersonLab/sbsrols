@@ -18,7 +18,7 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= ts_sbs_list.so
+VMEROL			= ts_test1_list.so ts_sbs_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
 ROLLIBS			= -lsd -lts -ltd -ldalmaRol
 

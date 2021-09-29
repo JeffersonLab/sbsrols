@@ -26,6 +26,11 @@
 extern int tdID[21];
 extern int nTD;
 
+#define SCALERS 1
+#ifdef SCALERS
+int scaler_inhibit=0;
+#endif
+
 #include "dmaBankTools.h"
 #include "tsprimary_list.c" /* source required for CODA */
 #include "sdLib.h"
@@ -37,8 +42,9 @@ extern int nTD;
 #include "usrstrutils.c"
 
 #define BLOCKLEVEL  1
-#define BUFFERLEVEL 1
-#define SYNC_INTERVAL 1000
+/* override this setting with 'bufferlevel' user string */
+#define BUFFERLEVEL 2
+#define SYNC_INTERVAL 10000
 
 /* Set to Zero to define a Front Panel Trigger source
    RANDOM_RATE defines the Pulser rate
@@ -50,7 +56,7 @@ extern int nTD;
      5     15.63kHz
      6      7.81kHz
      7      3.91kHz   */
-#define RANDOM_RATE  7
+#define RANDOM_RATE  6
 
 /*
   Global to configure the trigger source
@@ -84,6 +90,7 @@ enum sbsARMS
    armHCAL = 0,
    armLHRS,
    armBIGBITE,
+   armSCALER,
    nArms
   };
 
@@ -91,12 +98,14 @@ char *armNames[nArms] =
   {
    "HCAL",
    "LHRS",
-   "BIGBITE"
+   "BIGBITE",
+   "SCALER"
   };
 
 enum sbsSlaves
   {
    nhcalROC16 = 0,
+   sbsvme29ROC1,
    nhcalROC17,
    nlhrsROC10,
    nbbgemROC19,
@@ -109,14 +118,19 @@ enum sbsSlaves
 TD_SLAVE_MAP tdSlaveConfig[nSlaves] =
   {
    { 0,  19,   1,  armHCAL,  "hcalROC16"},
+   { 0,  19,   2,  armSCALER, "sbsvme29ROC1"},
    { 0,  19,   4,  armHCAL,  "hcalROC17"},
    { 0,  19,   8,  armLHRS,  "lhrsROC10"},
-   { 0,  20,   2,  armBIGBITE, "bbgemROC19"},
+   { 0,  19,   6,  armBIGBITE, "bbgemROC19"},
    { 0,  20,   3,  armBIGBITE, "grinchROC7"},
    { 0,  20,   6,  armBIGBITE, "bbshowerROC6"},
-   { 0,  20,   7,  armBIGBITE, "bbhodoROC5"}
+   { 0,  19,   7,  armBIGBITE, "bbhodoROC5"}
   };
 
+
+/* prescale factors gathered here */
+#define NPSF 8
+int psfact[NPSF];
 
 /*
   Read the user flags/configuration file.
@@ -135,6 +149,74 @@ readUserFlags()
   printf("%s: Reading user flags file.",
 	 __func__);
   init_strings();
+
+  char *fstring = getstr("ffile");
+  if(fstring == NULL)
+    {
+      /* Load a default */
+    }
+
+  /*
+   *
+   *   Set prescales factors from prescale.dat
+   *   - this TS can have 32 inputs but for now we only use 8 for now
+   *   - ps factor of -1 disables an input
+   *   - otherwise the prescaling is 2^ps.
+   *       For example ps=0 means 1 and ps=3 means 8
+   */
+
+  psfact[0] = getint(PS1);
+  psfact[1] = getint(PS2);
+  psfact[2] = getint(PS3);
+  psfact[3] = getint(PS4);
+  psfact[4] = getint(PS5);
+  psfact[5] = getint(PS6);
+  psfact[6] = getint(PS7);
+  psfact[7] = getint(PS8);
+
+  int jj;
+  printf("\n****** Prescale factors : ");
+  for (jj = 0; jj < NPSF; jj++) {
+    printf("T%d=%d ; ",jj+1,psfact[jj]);
+  }
+  printf("\n\n");
+
+  /* contruct mask for allowing TS inputs */
+
+  unsigned int mask=0;
+  for (jj = 0; jj<NPSF; jj++) {
+    if (psfact[jj] > -1) mask |= (1<<jj);
+  }
+
+  printf("Enabled inputs mask = 0x%x \n",mask);
+
+  /* Enable/Disable specific inputs */
+  tsSetFPInput(mask);
+
+  for (jj = 0; jj<NPSF; jj++) {
+    if(psfact[jj]>0) tsSetTriggerPrescale(2,jj,psfact[jj]);
+  }
+
+  /* bufferLevel */
+  flag = getflag("bufferlevel");
+  if(flag)
+    {
+      bufferLevel = 1;
+
+      if(flag > 1)
+	{
+	  bufferLevel = getint("bufferlevel");
+	}
+
+    }
+  else
+    {
+      bufferLevel = BUFFERLEVEL;
+    }
+  printf("%s: Setting bufferlevel = %d\n",
+	 __func__, bufferLevel);
+  tsSetBlockBufferLevel(bufferLevel);
+  tdGSetBlockBufferLevel(bufferLevel);
 
   /* Order of operations..
      - check 'all'
@@ -205,13 +287,14 @@ readUserFlags()
 
 	  tdSlaveConfig[islave].enable = flagval;
 	}
+
     }
 
   /* Print config */
   printf("%s\n TD Slave Config from usrstringutils\n",
 	 __func__);
   printf("  Enable      Slot      Port       Arm       Roc\n");
-  printf("---------|---------|---------|---------|---------|---------|\n");
+  printf("|----------------------------------------------------------|\n");
 
   for(islave = 0; islave < nSlaves; islave++)
     {
@@ -236,6 +319,21 @@ readUserFlags()
   printf("\n");
 
 }
+
+#ifdef SCALERS
+/* Remex function to toggle on or off the hardware scaler inhibit */
+void setScalerInhibit(int inhibit) {
+  scaler_inhibit = (inhibit!=0);
+  /* Tweak bits 2-4.  Do just one bit once we figure out where
+     these outputs are on the TS */
+  tsSetOutputPort(0,0,scaler_inhibit,scaler_inhibit,0,0);
+  if(scaler_inhibit) {
+    printf("Scalers inhibited\n");
+  } else {
+    printf("Scalers enabled\n");
+  }
+}
+#endif
 
 /* function prototype */
 void rocTrigger(int arg);
@@ -276,9 +374,14 @@ rocDownload()
     }
 
   /* Enable/Disable specific inputs */
-  tsSetFPInput(0x7);
-  tsSetTriggerPrescale(2,1,0);
+   tsSetFPInput(0x1f);
+  // tsSetFPInput(0x2);
   tsSetTriggerPrescale(2,0,0);
+  tsSetTriggerPrescale(2,1,0);
+  tsSetTriggerPrescale(2,2,0);
+  tsSetTriggerPrescale(2,3,0);
+  tsSetTriggerPrescale(2,4,0);
+  tsSetTriggerPrescale(2,5,0);
   tsSetGTPInput(0x0);
 
   /* Set Time stamp format - 48 bits */
@@ -331,7 +434,10 @@ rocDownload()
   /* Reset Active ROC Masks on all TD modules */
   tsTriggerReadyReset();
 
-  readUserFlags();
+#ifdef SCALERS
+  /* Make sure scalers are not inhbited */
+  setScalerInhibit(0);
+#endif
 
 /*   tsSetPrescale(0); */
 
@@ -350,6 +456,10 @@ rocPrestart()
   int stat;
   int islot;
 
+#ifdef SCALERS
+  /* Inhibit scalers */
+  setScalerInhibit(1);
+#endif
 
   /* Set number of events per block */
   tsSetBlockLevel(blockLevel);
@@ -357,9 +467,23 @@ rocPrestart()
   /* On TD's too */
   tdGSetBlockLevel(blockLevel);
 
+  /* Read User Flags with usrstringutils
+     What's set
+     - prescale factors
+     - TD Slave Ports
+     - bufferLevel
+   */
+  readUserFlags();
 
   /* Reset Active ROC Masks on all TD modules */
+#ifdef OLDTRR
   tsTriggerReadyReset();
+#else
+  for (islot = 0; islot < nTD; islot++)
+    {
+      tdTriggerReadyReset(tdSlot(islot));
+    }
+#endif /* OLDTRR */
 
   /* Set Sync Event Interval  (0 disables sync events, max 65535) */
   tsSetSyncEventInterval(ival);
@@ -445,6 +569,11 @@ rocGo()
 	}
     }
 
+#ifdef SCALERS
+  /* Enable scalers */
+  setScalerInhibit(0);
+#endif
+
 }
 
 /****************************************
@@ -455,6 +584,12 @@ rocEnd()
 {
 
   int islot;
+
+#ifdef SCALERS  /* Inhibit scalers */
+  setScalerInhibit(1);
+  /* A script on the host will reenable scalers */
+#endif
+
 
   if(rocTriggerSource == 1)
     {
@@ -468,7 +603,16 @@ rocEnd()
       tsSoftTrig(1,0,100,0);
     }
 
+  for (islot = 0; islot < nTD; islot++)
+    {
+      tdLatchTimers(tdSlot(islot));
+    }
+
   DALMAGO;
+  for (islot = 0; islot < nTD; islot++)
+    {
+      tdPrintBusyCounters(tdSlot(islot));
+    }
   tdGStatus(0);
   tsStatus(0);
   DALMASTOP;
@@ -497,7 +641,11 @@ rocTrigger(int evntno)
   }
 
   /* Set Output port bit 0  */
+#ifdef SCALERS
+  tsSetOutputPort(0,0,scaler_inhibit,scaler_inhibit,0,0);
+#else
   tsSetOutputPort(1,0,0,0,0,0);
+#endif
 
   /* Readout the trigger block from the TS
      Trigger Block MUST be reaodut first */
@@ -527,8 +675,12 @@ rocTrigger(int evntno)
 
   }
 
-  /* Clear all output register bits */
+  /* Clear all output register bit 0 */
+#ifdef SCALERS
+  //  tsSetOutputPort(scaler_inhibit,scaler_inhibit,scaler_inhibit,scaler_inhibit,0,0);
+#else
   tsSetOutputPort(0,0,0,0,0,0);
+#endif
 
 }
 

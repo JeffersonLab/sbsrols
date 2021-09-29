@@ -40,13 +40,29 @@
    change them*/
 #define FLAG_FILE "ffile"
 #define COMMENT_CHAR ';'
+#define PS1 "ps1"
+#define PS2 "ps2"
+#define PS3 "ps3"
+#define PS4 "ps4"
+#define PS5 "ps5"
+#define PS6 "ps6"
+#define PS7 "ps7"
+#define PS8 "ps8"
+#define PS9 "ps9"
+#define PS10 "ps10"
+#define PS11 "ps11"
+#define PS12 "ps12"
+#define PS13 "ps13"
+#define PS14 "ps14"
+#define PS15 "ps15"
+#define PS16 "ps16"
 
 
 #ifndef INTERNAL_FLAGS
 #define INTERNAL_FLAGS ""
 #endif
 
-char *internal_configusrstr=0;
+char *internal_configusrstr="ffile=/adaqfs/home/sbs-onl/prescale/prescale.dat";
 char *file_configusrstr=0;
 
 /* For internal use. Returns ptr to keyword and ptr to value */
