@@ -50,9 +50,20 @@ vtp_mpd_setup()
   uint32_t vtpFiberMaskToInit;
 
 
-  if(vtpMpdConfigInit("/home/sbs-onl/cfg/vtp_config.cfg") == ERROR)
+  /* default config filenames, if they are not defined in COOL */
+  char *apvConfigFilename = "/home/sbs-onl/cfg/vtp_config_TS.cfg";
+
+  if(vtpMpdConfigInit(rol->usrConfig) == ERROR)
     {
-      daLogMsg("ERROR","Error in configuration file");
+      printf("%s: Error using rol->usrConfig %s.\n",
+	     __func__, rol->usrConfig);
+
+      printf("  trying %s\n",
+	     apvConfigFilename);
+
+      if(vtpMpdConfigInit(apvConfigFilename) == ERROR)
+	daLogMsg("ERROR","Error loading APV configuration file");
+
       return;
     }
 
@@ -74,7 +85,16 @@ vtp_mpd_setup()
     ++vtpFiberBit;
   }
 
-  vtpConfig("/home/sbs-onl/vtp/cfg/sbsvtp3.config");
+  /* default config filenames, if they are not defined in COOL */
+  char *vtpConfigFilename = "/home/sbs-onl/vtp/cfg/sbsvtp3.config";
+
+  /* Read Config file and Intialize VTP */
+  vtpInitGlobals();
+
+  if(rol->usrString)
+    vtpConfig(rol->usrString);
+  else
+    vtpConfig(vtpConfigFilename);
 
 
   vtpMpdGetCommonModeFilename(COMMON_MODE_FILENAME);

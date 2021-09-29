@@ -132,9 +132,6 @@ rocPrestart()
   printf("%s: rol->usrConfig = %s\n",
 	 __func__, rol->usrConfig);
 
-  /* Read Config file and Intialize VTP */
-  vtpInitGlobals();
-
   daLogMsg("INFO","Call vtpMpdPrestart");
   vtpMpdPrestart();
 
