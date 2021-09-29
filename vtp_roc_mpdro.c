@@ -134,10 +134,6 @@ rocPrestart()
 
   /* Read Config file and Intialize VTP */
   vtpInitGlobals();
-  if(rol->usrConfig)
-    vtpConfig(rol->usrConfig);
-  else
-    vtpConfig("/home/sbs-onl/vtp/cfg/sbsvtp3.config");
 
   daLogMsg("INFO","Call vtpMpdPrestart");
   vtpMpdPrestart();

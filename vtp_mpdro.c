@@ -17,16 +17,12 @@
 //   e.g. ~/vtp/cfg/sbsvtp3.config
 char COMMON_MODE_FILENAME[250], PEDESTAL_FILENAME[250];
 
-/*
-  Global to configure pedestal subtraction mode
-      0 : subtraction mode DISABLED
-      1 : subtraction mode ENABLED
-
-  Set with vtpSetPedSubtractionMode(int enable)
-*/
-int vtpPedSubtractionMode = 0;
-void vtpSetPedSubtractionMode(int enable); // routine prototype
-
+void
+vtpSetPedSubtractionMode(int enable) // routine prototype
+{
+  printf("%s: NO!  This routine is not supported! Use the config file!\n",
+	 __func__);
+}
 /* vtp defs */
 
 /*MPD Definitions*/
@@ -43,27 +39,8 @@ char *apvbuffer;
 char *bufp;
 
 
-int
-vtpMpdDalogStatus(unsigned int fmask)
-{
-  DALMAGO;
-  vtpMpdPrintStatus(fmask, 0);
-  DALMASTOP;
-  return 0;
-}
-
-
 void
-vtpPrintMPD_OB_STATUS(int dalogFlag)
-{
-  DALMAGO;
-  mpdGStatus(0);
-  DALMASTOP;
-}
-
-
-
-void vtp_mpd_setup()
+vtp_mpd_setup()
 {
   /*****************
    *   VTP SETUP
@@ -88,7 +65,7 @@ void vtp_mpd_setup()
   vtpMpdDisable(0xffffffff);
 
   vtpFiberMaskToInit = mpdGetVTPFiberMask();
-  printf("VTP fiber mask: 0x%08x", vtpFiberMaskToInit);
+  printf("VTP fiber mask: 0x%08x\n", vtpFiberMaskToInit);
 
   while(vtpFiberMaskToInit != 0){
     if((vtpFiberMaskToInit & 0x1) == 1)
@@ -97,15 +74,19 @@ void vtp_mpd_setup()
     ++vtpFiberBit;
   }
 
-  vtpGetCommonModeFilename(COMMON_MODE_FILENAME);
-  vtpGetPedestalFilename(PEDESTAL_FILENAME);
+  vtpConfig("/home/sbs-onl/vtp/cfg/sbsvtp3.config");
+
+
+  vtpMpdGetCommonModeFilename(COMMON_MODE_FILENAME);
+  vtpMpdGetPedestalFilename(PEDESTAL_FILENAME);
+
+  float pedestal_factor = 1;
+  vtpMpdGetPedestalFactor(&pedestal_factor);
 
   //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
   int apvId, cModeMin, cModeMax, cModeRocId, cModeSlot;
   int fiberID = -1, last_mpdSlot = -1;
   FILE *fcommon   = fopen(COMMON_MODE_FILENAME,"r");
-
-
 
   if(fcommon == NULL)
     {
@@ -130,58 +111,76 @@ void vtp_mpd_setup()
   char *line_ptr = NULL;
   size_t line_len;
   fiberID = -1, last_mpdSlot = -1;
-  if((fpedestal==NULL) || (vtpPedSubtractionMode == 0)) {
+  if(fpedestal==NULL)
+    {
+      printf("no pedestal file\n");
 
-    /* Correct vtpPedSubtractionMode if fpedestal == NULL */
-    if(fpedestal==NULL) vtpPedSubtractionMode = 0;
+      /* Reset the enable_cm, and build_all_samples
+	 assuming missing pedestal file means its a pedestal run */
 
-    for(fiberID=0; fiberID<16; fiberID++)
-      {
-	for(apvId=0; apvId<15; apvId++)
-          {
-            for(stripNo=0; stripNo<128; stripNo++)
-	      {
-		vtpMpdSetApvOffset(fiberID, apvId, stripNo, 0);
-		vtpMpdSetApvThreshold(fiberID, apvId, stripNo, 0);
-	      }
-          }
-      }
-    printf("no pedestal file or vtpPedSubtractionmode == 0\n");
-  }else{
-    printf("trying to read pedestal \n");
+      int build_all_samples, build_debug_headers,
+	enable_cm, noprocessing_prescale,
+	allow_peak_any_time, min_avg_samples;
 
-    while(!feof(fpedestal))
-      {
-	getline(&line_ptr, &line_len, fpedestal);
+      vtpMpdEbGetFlags(&build_all_samples, &build_debug_headers,
+		       &enable_cm, &noprocessing_prescale,
+		       &allow_peak_any_time, &min_avg_samples);
 
-	n = sscanf(line_ptr, "%10s %d %d %d %d", buf, &i1, &i2, &i3, &i4);
-	if( (n == 5) && !strcmp("APV", buf))
-          {
-            cModeRocId = i1;
-            fiberID = i3;
-            apvId = i4;
-            continue;
-          }
+      enable_cm = 0;
+      build_all_samples = 1;
+
+      vtpMpdEbSetFlags(build_all_samples, build_debug_headers,
+		       enable_cm, noprocessing_prescale,
+		       allow_peak_any_time, min_avg_samples);
+
+      for(fiberID=0; fiberID<16; fiberID++)
+	{
+	  for(apvId=0; apvId<15; apvId++)
+	    {
+	      for(stripNo=0; stripNo<128; stripNo++)
+		{
+		  vtpMpdSetApvOffset(fiberID, apvId, stripNo, 0);
+		  vtpMpdSetApvThreshold(fiberID, apvId, stripNo, 0);
+		}
+	    }
+	}
+    }
+  else
+    {
+      printf("trying to read pedestal \n");
+
+      while(!feof(fpedestal))
+	{
+	  getline(&line_ptr, &line_len, fpedestal);
+
+	  n = sscanf(line_ptr, "%10s %d %d %d %d", buf, &i1, &i2, &i3, &i4);
+	  if( (n == 5) && !strcmp("APV", buf))
+	    {
+	      cModeRocId = i1;
+	      fiberID = i3;
+	      apvId = i4;
+	      continue;
+	    }
 
 
-	n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
+	  n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
 
-        // if settings are for us
-        if(cModeRocId != ROCID)
-        {
-          printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
-          continue;
-        }
+	  // if settings are for us
+	  if(cModeRocId != ROCID)
+	    {
+	      printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+	      continue;
+	    }
 
-	if(n == 3)
-          {
-	    //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
-            vtpMpdSetApvOffset(fiberID, apvId, stripNo, (int)ped_offset);
-	    vtpMpdSetApvThreshold(fiberID, apvId, stripNo, 5*(int)ped_rms);
-          }
-      }
-    fclose(fpedestal);
-  }
+	  if(n == 3)
+	    {
+	      //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
+	      vtpMpdSetApvOffset(fiberID, apvId, stripNo, (int)ped_offset);
+	      vtpMpdSetApvThreshold(fiberID, apvId, stripNo, (int)(pedestal_factor*ped_rms));
+	    }
+	}
+      fclose(fpedestal);
+    }
 
   // Load common-mode file settings
   if(fcommon==NULL){
@@ -190,7 +189,7 @@ void vtp_mpd_setup()
     printf("trying to read commonMode\n");
     while(fscanf(fcommon, "%d %d %d %d %d %d", &cModeRocId, &cModeSlot, &fiberID, &apvId, &cModeMin, &cModeMax)==6)
       {
-	printf("fiberID %d %d %d %d %d %d \n", cModeRocId, cModeSlot, fiberID, apvId, cModeMin, cModeMax);
+	/* printf("fiberID %d %d %d %d %d %d \n", cModeRocId, cModeSlot, fiberID, apvId, cModeMin, cModeMax); */
 
 	//	  cModeMin = 200;
 	//	  cModeMax = 800;
@@ -507,18 +506,6 @@ vtpMpdApvConfigStatus()
 void
 vtpMpdDownload()
 {
-#ifdef PEDSUB_USRSTRING
-  /* Check usrString for pedestal subtraction mode */
-  if(strcmp("PedSub",rol->usrString) == 0)
-    {
-      vtpSetPedSubtractionMode(1);
-    }
-  else
-    {
-      vtpSetPedSubtractionMode(0);
-    }
-#endif
-
   apvbuffer = (char *)malloc(1024*50*sizeof(char));
 
   printf("rocDownload: User Download Executed\n");
@@ -572,7 +559,6 @@ vtpMpdGo()
   }
 
   DALMAGO;
-  printf("vtpPedSubtractionMode = %d\n", vtpPedSubtractionMode);
   printf("MPD PEDESTAL FILENAME: %s\n", PEDESTAL_FILENAME);
   printf("COMMON_MODE_FILENAME: %s\n", COMMON_MODE_FILENAME);
   DALMASTOP;
@@ -589,7 +575,6 @@ vtpMpdEnd()
     mpdTRIG_Disable(mpdSlot(k));
   }
 
-  vtpPrintMPD_OB_STATUS(1);
 }
 
 void
@@ -609,20 +594,6 @@ vtpMpdCleanup()
 
   if(apvbuffer)
     free(apvbuffer);
-}
-
-/*
-  Routine to configure pedestal subtraction mode
-      0 : subtraction mode DISABLED
-      1 : subtraction mode ENABLED
-*/
-
-void
-vtpSetPedSubtractionMode(int enable)
-{
-  vtpPedSubtractionMode = (enable) ? 1 : 0;
-
-  daLogMsg("INFO","Setting Pedestral Subtraction Mode (%d)", vtpPedSubtractionMode);
 }
 
 /*
