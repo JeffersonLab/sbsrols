@@ -160,44 +160,10 @@ rocDownload()
       daLogMsg("ERROR","SD not found");
     }
 
-  /*****************
-   *   FADC SETUP
-   *****************/
+  /* FADC library init */
+  faInit(FADC_ADDR, FADC_INCR, NFADC, FA_INIT_SKIP);
 
-  /* FADC Initialization flags */
-  iflag = 0; /* NO SDC */
-  iflag |= (1<<0);  /* VXS sync-reset */
-  iflag |= FA_INIT_VXS_TRIG;  /* VXS trigger source */
-  iflag |= FA_INIT_VXS_CLKSRC;  /* VXS 250MHz Clock source */
-
-  fadcA32Base = 0x09000000;
-
-  faInit(FADC_ADDR, FADC_INCR, NFADC, iflag);
-
-  /* Just one FADC250 */
-  if(nfadc == 1)
-    faDisableMultiBlock();
-  else
-    faEnableMultiBlock(1);
-
-  /* configure all modules based on config file */
-  FADC_READ_CONF_FILE;
-
-  for(ifa = 0; ifa < nfadc; ifa++)
-    {
-      /* Bus errors to terminate block transfers (preferred) */
-      faEnableBusError(faSlot(ifa));
-
-      /*trigger-related*/
-      faResetMGT(faSlot(ifa),1);
-      faSetTrigOut(faSlot(ifa), 7);
-
-      /* Enable busy output when too many events are being processed */
-      faSetTriggerBusyCondition(faSlot(ifa), 3);
-    }
-
-  sdSetActiveVmeSlots(faScanMask()); /* Tell the sd where to find the fadcs */
-
+  faGStatus(0);
 #ifdef ENABLE_F1
   /* Setup the F1TDC */
   f1tdcA32Base = 0x08800000;
@@ -249,6 +215,44 @@ rocPrestart()
 #endif
 
   /* Program/Init VME Modules Here */
+  /*****************
+   *   FADC SETUP
+   *****************/
+
+  /* FADC Initialization flags */
+  int iflag = 0; /* NO SDC */
+  iflag |= (1<<0);  /* VXS sync-reset */
+  iflag |= FA_INIT_VXS_TRIG;  /* VXS trigger source */
+  iflag |= FA_INIT_VXS_CLKSRC;  /* VXS 250MHz Clock source */
+
+  fadcA32Base = 0x09000000;
+
+  faInit(FADC_ADDR, FADC_INCR, NFADC, iflag);
+
+  /* Just one FADC250 */
+  if(nfadc == 1)
+    faDisableMultiBlock();
+  else
+    faEnableMultiBlock(1);
+
+  /* configure all modules based on config file */
+  FADC_READ_CONF_FILE;
+
+  for(ifa = 0; ifa < nfadc; ifa++)
+    {
+      /* Bus errors to terminate block transfers (preferred) */
+      faEnableBusError(faSlot(ifa));
+
+      /*trigger-related*/
+      faResetMGT(faSlot(ifa),1);
+      faSetTrigOut(faSlot(ifa), 7);
+
+      /* Enable busy output when too many events are being processed */
+      faSetTriggerBusyCondition(faSlot(ifa), 3);
+    }
+
+  sdSetActiveVmeSlots(faScanMask()); /* Tell the sd where to find the fadcs */
+
 
 #ifdef ENABLE_F1
   /* Use 31.25MHz clock from TI */
