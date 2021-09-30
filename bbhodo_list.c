@@ -9,7 +9,7 @@
 
 /* Event Buffer definitions */
 #define MAX_EVENT_POOL     100
-#define MAX_EVENT_LENGTH   1024*40      /* Size in Bytes */
+#define MAX_EVENT_LENGTH   1024*240      /* Size in Bytes */
 
 #ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
@@ -65,6 +65,9 @@ unsigned int MAXFADCWORDS=0;
 #define C1190_BANKID 1190
 // 0: CBLT   1: LL-DMA
 #define C1190_ROMODE C1190_CBLT
+
+/* Clear counter at 1190 syncevent */
+unsigned int c1190ClearCounter = 0;
 
 /*
   Global to configure the trigger source
@@ -307,6 +310,9 @@ rocGo()
     }
 #endif
 
+  /* Reset c1190 clear counter */
+  c1190ClearCounter = 0;
+
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 }
 
@@ -336,6 +342,8 @@ rocEnd()
 
   DALMAGO;
   tdc1190GStatus(0);
+  printf("   c1190 syncevent clear (c1190ClearCounter) = %d\n",
+	 c1190ClearCounter);
 #ifdef USE_FADC
   faGStatus(0);
 #endif
@@ -463,6 +471,7 @@ rocTrigger(int arg)
   /* Check for SYNC Event or Bufferlevel == 1 */
   if((tiGetSyncEventFlag() == 1) || (tiGetBlockBufferLevel() == 1))
     {
+      int iflush = 0, maxflush = 10;
       /* Check for data available */
       int davail = tiBReady();
       if(davail > 0)
@@ -470,7 +479,8 @@ rocTrigger(int arg)
 	  daLogMsg("ERROR","%4d: TI Data available (%d) after readout! \n",
 		 tiGetIntCount(), davail);
 
-	  while(tiBReady())
+	  iflush = 0;
+	  while(tiBReady() && (++iflush < maxflush))
 	    {
 	      vmeDmaFlush(tiGetAdr32());
 	    }
@@ -485,7 +495,8 @@ rocTrigger(int arg)
 	      daLogMsg("ERROR", "fADC250 Data available (%d) after readout in SYNC event (%d)\n",
 		     davail, tiGetIntCount());
 
-	      while(faBready(faSlot(ifa)))
+	      iflush = 0;
+	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
 		{
 		  vmeDmaFlush(faGetA32(faSlot(ifa)));
 		}
@@ -499,6 +510,8 @@ rocTrigger(int arg)
       static int complaints = 0;
       if(datascan > 0)
 	{
+	  c1190ClearCounter++;
+
 	  if(++complaints < max_complaints)
 	    daLogMsg("ERROR","%4d: C1190 Data available (0x%x) after readout! %d\n",
 		     tiGetIntCount(), datascan, complaints);
