@@ -126,21 +126,30 @@ vtp_mpd_setup()
   char *line_ptr = NULL;
   size_t line_len;
   fiberID = -1, last_mpdSlot = -1;
-  if(fpedestal==NULL)
+
+  // We will force a pedestal mode run, if any of these conditions are met
+  // - enable_cm = 0
+  // - PEDESTAL_FILENAME undefined or missing
+  int build_all_samples, build_debug_headers,
+    enable_cm, noprocessing_prescale,
+    allow_peak_any_time, min_avg_samples;
+
+  vtpMpdEbGetFlags(&build_all_samples, &build_debug_headers,
+		   &enable_cm, &noprocessing_prescale,
+		   &allow_peak_any_time, &min_avg_samples);
+
+  if((fpedestal==NULL) || (enable_cm == 0))
     {
-      printf("no pedestal file\n");
+      daLogMsg("INFO","Pedestal Run Engaged");
+
+      if (fpedestal==NULL)
+	daLogMsg("INFO","Undefined or Missing Pedestal File\n");
+
+      if (enable_cm == 0)
+	daLogMsg("INFO","enable_cm = 0\n");
 
       /* Reset the enable_cm, and build_all_samples
 	 assuming missing pedestal file means its a pedestal run */
-
-      int build_all_samples, build_debug_headers,
-	enable_cm, noprocessing_prescale,
-	allow_peak_any_time, min_avg_samples;
-
-      vtpMpdEbGetFlags(&build_all_samples, &build_debug_headers,
-		       &enable_cm, &noprocessing_prescale,
-		       &allow_peak_any_time, &min_avg_samples);
-
       enable_cm = 0;
       build_all_samples = 1;
 
