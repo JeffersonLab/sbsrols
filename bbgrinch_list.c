@@ -677,6 +677,7 @@ rocTrigger(int arg)
   /* Check for SYNC Event */
   if(tiGetSyncEventFlag() == 1)
     {
+      int iflush = 0, maxflush = 10;
       /* Check for data available */
       int davail = tiBReady();
       if(davail > 0)
@@ -684,7 +685,8 @@ rocTrigger(int arg)
 	  daLogMsg("ERROR","TI Data available (%d) after readout in SYNC event \n",
 		 davail);
 
-	  while(tiBReady())
+	  iflush = 0;
+	  while(tiBReady() && (++iflush < maxflush))
 	    {
 	      vmeDmaFlush(tiGetAdr32());
 	    }
@@ -699,7 +701,8 @@ rocTrigger(int arg)
 	      daLogMsg("ERROR", "fADC250 Data available (%d) after readout in SYNC event \n",
 		     davail);
 
-	      while(faBready(faSlot(ifa)))
+	      iflush = 0;
+	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
 		{
 		  vmeDmaFlush(faGetA32(faSlot(ifa)));
 		}
@@ -716,7 +719,8 @@ rocTrigger(int arg)
 	      daLogMsg("ERROR", "VETROC slot %d Data available (%d) after readout in SYNC event \n",
 		       vetrocSlot(ivt), davail);
 
-	      while(vetrocBready(vetrocSlot(ivt)))
+	      iflush = 0;
+	      while(vetrocBready(vetrocSlot(ivt)) && (++iflush < maxflush))
 	      	{
 	      	  vmeDmaFlush(vetrocGetA32(vetrocSlot(ivt)));
 	      	}

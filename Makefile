@@ -18,7 +18,7 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= bbgrinch_list.so ti_list.so ti_slave_list.so
+VMEROL			= bbgrinch_list.so bbgrinch_slave_list.so ti_list.so ti_slave_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
 ROLLIBS			= -lvetroc -lc792 -lsd -lts -lfadc -ldalmaRol
 
