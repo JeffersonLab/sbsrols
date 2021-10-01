@@ -20,7 +20,7 @@ endif
 # Plug in your primary readout lists here.. CRL are found automatically
 VMEROL			= fadc_lhrs.so ti_bridge_list.so ti_master_list.so ti_slave_list.so ti_slave5_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -lfadc -lsd -lts -ldalmaRol
+ROLLIBS			= -lfadc -lsd -lts -ldalmaRol -lcrateShm -lscalInt -lsis3801
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -78,6 +78,30 @@ all:  $(VMEROL) $(SOBJS)
 %.so: %.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+# Code based on fadc_example
+fadc_lhrs.so: fadc_lhrs.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+fadc_slave5_lhrs.so: fadc_lhrs.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+
+# From Bryan Moffit 9/16/2021
+fadc_example.so: fadc_example.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+# This is observed to work with the TS -- From Bryan Moffit 9/16/2021
+fadc_slave5_example.so: fadc_example.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
 clean distclean:
