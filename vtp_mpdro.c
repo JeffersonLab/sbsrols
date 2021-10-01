@@ -62,9 +62,11 @@ vtp_mpd_setup()
 	     apvConfigFilename);
 
       if(vtpMpdConfigInit(apvConfigFilename) == ERROR)
-	daLogMsg("ERROR","Error loading APV configuration file");
+	{
+	  daLogMsg("ERROR","Error loading APV configuration file");
 
-      return;
+	  return;
+	}
     }
 
   vtpMpdConfigLoad();
@@ -85,21 +87,10 @@ vtp_mpd_setup()
     ++vtpFiberBit;
   }
 
-  /* default config filenames, if they are not defined in COOL */
-  char *vtpConfigFilename = "/home/sbs-onl/vtp/cfg/sbsvtp3.config";
-
   /* Read Config file and Intialize VTP */
   vtpInitGlobals();
 
-  if(rol->usrString)
-    {
-      vtpConfig(rol->usrString);
-    }
-  else
-    {
-      vtpConfig(vtpConfigFilename);
-      strcpy(rol->usrString, vtpConfigFilename);
-    }
+  vtpConfig(vtpConfigFilename);
 
   vtpMpdGetCommonModeFilename(COMMON_MODE_FILENAME);
   vtpMpdGetPedestalFilename(PEDESTAL_FILENAME);

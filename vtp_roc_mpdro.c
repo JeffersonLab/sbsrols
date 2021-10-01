@@ -43,6 +43,11 @@ int firstEvent;
 */
 unsigned int emuData[] = {0x634d7367,0x20697320,0x636f6f6c,6,0,4196352,1,1};
 
+
+/* default config filenames, if they are not defined in COOL */
+char *vtpConfigFilename = "/home/sbs-onl/vtp/cfg/sbsvtp3.config";
+
+
 /* Start of MPD specific configuration */
 #include "vtp_mpdro.c"
 
@@ -232,7 +237,7 @@ rocPrestart()
 
   unsigned int ubuf[10000];
   unsigned int uetype = 137;
-  vtpRocFile2Event(rol->usrString,
+  vtpRocFile2Event(vtpConfigFilename,
 		   (unsigned char *)&ubuf[0],uetype,40000);
   /* Send a User Event - read in a File */
   vtpRocEvioWriteUserEvent(ubuf);
