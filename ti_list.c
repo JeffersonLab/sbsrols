@@ -97,7 +97,7 @@ rocDownload()
   tiSetBlockBufferLevel(BUFFERLEVEL);
 
   /* Add HCAL2 to port 1*/
-  tiAddSlave(1);
+  //  tiAddSlave(1);
 
 #endif
 

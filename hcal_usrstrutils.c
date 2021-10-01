@@ -38,8 +38,8 @@
 */
 /* Define some common keywords as symbols, so we have just one place to
    change them*/
-#define FLAG_FILE "file.flags"
-/*#define FLAG_FILE "ffile"*/
+/*#define FLAG_FILE "file.flags"*/
+#define FLAG_FILE "ffile"
 #define COMMENT_CHAR ';'
 
 

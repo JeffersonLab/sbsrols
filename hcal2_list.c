@@ -188,7 +188,7 @@ rocDownload()
   /* Add trigger latch pattern to datastream */
   tiSetFPInputReadout(1);
 #endif /* TI_MASTER */
-
+  tiSetBusySource(0xA,0); // adding F1 busy AC 10/01/2021
 
   /* Init the SD library so we can get status info */
   sdScanMask = 0;
@@ -342,23 +342,19 @@ rocPrestart()
      enable multiblock on the single board ourselves.
   */
 #ifndef DISABLE_MULTIBLOCK_READOUT
-  if(NF1TDC>1) {
+  if(NF1TDC>1)
     f1EnableMultiBlock();
-  } else {
-    /*  f1EnableBusError(F1_SLOT); */
-    f1GEnableBusError();
-  }
 #else /* Multiblock disabled? Enable the bus error on each F1TDC */
   f1DisableMultiBlock();
-  f1GEnableBusError();
   /* This is a test: */
 #endif /* End: !DISABLE_MULTIBLOCK_READOUT */
-  f1GStatus(0);
 
-  F1_SLOT = f1ID[0];
   f1GEnableData(F1_ALL_CHIPS); /* Enable data on all chips */
-  printf("\n\n\n * * * * BEFORE Sending ReSync (to lock resolution) \n\n\n");
-  f1GStatus(0);
+  f1GEnableBusError();
+  f1GSetBlockLevel(1);   /* fix default block level at 1 */
+  f1GClear();
+  F1_SLOT = f1ID[0];
+
   /*
   for(islot = 0; islot < NF1TDC; islot++)
     {
@@ -387,8 +383,8 @@ rocPrestart()
 #endif
 
 #ifdef ENABLE_F1
+  printf("\n\n\n * * * * BEFORE Sending ReSync (to lock resolution) \n\n\n");
   f1SDC_Sync();
-
   printf("\n\n\n * * * * AFTER  Sending ReSync (to lock resolution) \n\n\n");
   f1GStatus(0);
 #endif
@@ -436,6 +432,10 @@ rocGo()
   /*  Enable FADC */
   faGEnable(0, 0);
 #endif /* ENABLE_FADC */
+
+#ifdef ENABLE_F1
+  f1GSetBlockLevel(blockLevel);
+#endif
 
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 
@@ -492,7 +492,7 @@ void
 rocTrigger(int arg)
 {
   int ifa = 0, stat, nwords, dCnt;
-  unsigned int datascan, scanmask,islot,nf1tdc;
+  unsigned int datascan, scanmask, f1scanmask, islot, nf1tdc;
   int roType = 2, roCount = 0, blockError = 0;
 
   roCount = tiGetIntCount();
@@ -510,7 +510,7 @@ rocTrigger(int arg)
   dCnt = tiReadTriggerBlock(dma_dabufp);
   if(dCnt<=0)
     {
-      printf("No data or error.  dCnt = %d\n",dCnt);
+      printf("ERROR: No data or error in tiReadTriggerBlock().  dCnt = %d  readout# = %d\n",dCnt,roCount);
     }
   else
     {
@@ -526,7 +526,7 @@ rocTrigger(int arg)
   /* Mask of initialized modules */
   scanmask = faScanMask();
   /* Check scanmask for block ready up to 100 times */
-  datascan = faGBlockReady(scanmask, 100);
+  datascan = faGBlockReady(scanmask, 10);
   stat = (datascan == scanmask);
 
   if(stat)
@@ -566,7 +566,7 @@ rocTrigger(int arg)
 
 #ifdef ENABLE_F1
 #ifdef READOUT_F1
-  int roflag = 1;
+  int roflag = 1;  
 
   if(NF1TDC <= 1) {
     roflag = 1; /* DMA Transfer */
@@ -578,24 +578,26 @@ rocTrigger(int arg)
 #endif
   /* Set DMA for A32 - BLT64 */
   vmeDmaConfig(2,3,0);
+
   BANKOPEN(BANK_F1,BT_UI4,0);
 
   /* Insert the trigger count here */
-  *dma_dabufp++ = LSWAP(tiGetIntCount());
+  *dma_dabufp++ = LSWAP(roCount);
   /* Check for valid data here */
-  F1_SLOT = f1ID[0];
+  F1_SLOT = f1ID[0];  /* First F1 board slot */
+  f1scanmask = f1ScanMask();
 
   int ii, islot;
-  for(ii=0;ii<100;ii++)
+  for(ii=0;ii<10;ii++)
     {
-      datascan = f1Dready(F1_SLOT);
-      if (datascan>0)
+      datascan = f1DataScan(0);
+      if (datascan == f1scanmask)
 	{
 	  break;
 	}
     }
 
-  if(datascan>0)
+  if(datascan == f1scanmask)   /* All F1 say they have data */
     {
       for(islot = 0; islot < NF1TDC; islot++) {
        F1_SLOT = f1ID[islot];
@@ -610,7 +612,7 @@ rocTrigger(int arg)
 
       if(nwords < 0)
 	{
-	  printf("ERROR: in transfer (event = %d), status = 0x%x\n", tiGetIntCount(),nwords);
+	  printf("ERROR: in f1ReadEvent() transfer (event = %d), status = 0x%x\n", roCount,nwords);
 	  *dma_dabufp++ = LSWAP(0xda000bad);
 	}
       else
@@ -622,9 +624,16 @@ rocTrigger(int arg)
     }
   else
     {
-      printf("ERROR: Data not ready in event %d, F1TDC slot %d\n",tiGetIntCount(),F1_SLOT);
+      printf("ERROR: Data not ready for event %d. F1TDC data ready mask 0x%x is not equal to 0x%x\n",
+	     roCount,datascan, f1scanmask);
+
       *dma_dabufp++ = LSWAP(0xda000bad);
+
+      /* Just clear the F1 boards here worry about syncronizing later */
+      f1GClear();
+
     }
+
   *dma_dabufp++ = LSWAP(0xda0000ff); /* Event EOB */
   BANKCLOSE;
 
@@ -638,17 +647,20 @@ rocTrigger(int arg)
   /* Check for SYNC Event */
   if((tiGetSyncEventFlag() == 1) || (tiGetBlockBufferLevel() == 1))
     {
+      int iflush = 0, maxflush = 10;
       /* Check for data available */
       int davail = tiBReady();
       if(davail > 0)
 	{
-	  daLogMsg("ERROR","TI Data available (%d) after SYNC event \n",
-		   davail);
+	  daLogMsg("ERROR","TI Data still available (%d) after SYNC event ($d)\n",
+		   davail,roCount);
 
-	  while(tiBReady())
+	  iflush = 0;
+	  /* 
+	  while(tiBReady() && (++iflush < maxflush))
 	    {
 	      vmeDmaFlush(tiGetAdr32());
-	    }
+	      }*/
 	}
 
 #ifdef ENABLE_FADC
@@ -663,7 +675,8 @@ rocTrigger(int arg)
 		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
 		       faSlot(ifa), davail);
 
-	      while(faBready(faSlot(ifa)))
+	      iflush = 0;
+	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
 		{
 		  vmeDmaFlush(faGetA32(faSlot(ifa)));
 		}
@@ -683,10 +696,16 @@ rocTrigger(int arg)
 	      daLogMsg("ERROR",
 		       "f1TDC (slot %d) Data available (%d) after SYNC event\n",
 		       f1Slot(islot), davail);
-	      while(f1Dready(f1Slot(islot)))
+
+	      iflush = 0;
+	      /*
+	      while(f1Dready(f1Slot(islot)) && (++iflush < maxflush))
 		{
 		  vmeDmaFlush(f1GetA32(f1Slot(islot)));
-		}
+		  }*/
+	      /* Just clear the boards here */
+	      f1GClear();
+
 #ifdef OLDDMAFLUSH
 	      unsigned int trash[512];
 	      int timeout = 0;
@@ -713,7 +732,7 @@ rocTrigger(int arg)
     if((scaler_period>0 &&
 	((now.tv_sec - last_time.tv_sec
 	  + ((double)now.tv_nsec - (double)last_time.tv_nsec)/1000000000L) >= scaler_period))) {
-#ifdef FADC_SCALER_BANKS      
+#ifdef FADC_SCALER_BANKS
       BANKOPEN(9250,BT_UI4,0);
       read_fadc_scalers(&dma_dabufp,0);
       BANKCLOSE;
@@ -729,7 +748,7 @@ rocTrigger(int arg)
     }
   }
 #endif
-  
+
 }
 
 void

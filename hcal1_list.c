@@ -292,14 +292,32 @@ rocPrestart()
   if(flag_PULSER_ENABLED) {
     HCAL_LED_ITER=0;
     HCAL_LED_COUNT=0;
-    printf("HCAL Pulser sequence: ");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+    printf("HCAL Pulser sequence %i steps: ",flag_LED_NSTEPS);
     for(i = 0 ; i < flag_LED_NSTEPS; i++) {
       printf(" %d/%d",flag_LED_STEP[i],flag_LED_NSTEP[i]);
     }
     printf("\n");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+    printf("**************************************************** \n");
+
     /* Clock in the first setting */
+    /*    .... first, clear all boxes...twice, if we don't switch to clocking in to each board separately */
     HCAL_LED_C_STEP = flag_LED_STEP[0];
     HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
+    int idum;
+      for(idum=0;idum<16;idum++){
+    hcalClkIn(0);
+      }
+    hcalClkIn(HCAL_LED_C_STEP);
+    /*    hcalClkIn(HCAL_LED_C_STEP);
     hcalClkIn(HCAL_LED_C_STEP);
     hcalClkIn(HCAL_LED_C_STEP);
     hcalClkIn(HCAL_LED_C_STEP);
@@ -307,8 +325,8 @@ rocPrestart()
     hcalClkIn(HCAL_LED_C_STEP);
     hcalClkIn(HCAL_LED_C_STEP);
     hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-  } else {
+    */  
+} else {
     printf("Pulser_enabled is *False*");
     hcalClkIn(0);
   }
@@ -417,9 +435,18 @@ rocTrigger(int arg)
    *  sstMode  = 0 (SST160) 1 (SST267) 2 (SST320)
    */
   vmeDmaConfig(2,5,1);
-
   dCnt = tiReadTriggerBlock(dma_dabufp);
-  /*  printf("TI says trigger block length is %d \n",dCnt);   */
+
+
+  /*
+   int idum;
+    printf("TI says trigger block length is %d \n",dCnt);
+    for(idum=0;idum<dCnt;idum++){printf("%i  %9X\n",idum,*(dma_dabufp+idum));}
+
+    printf("Trig wd 2:  %16X\n",*(dma_dabufp+2));
+
+  */
+
   if(dCnt<=0)
     {
       printf("No data or error.  dCnt = %d\n",dCnt);
@@ -479,6 +506,7 @@ rocTrigger(int arg)
   /* Check for SYNC Event */
   if(tiGetSyncEventFlag() == 1)
     {
+      int iflush = 0, maxflush = 10;
       /* Check for data available */
       int davail = tiBReady();
       if(davail > 0)
@@ -486,7 +514,8 @@ rocTrigger(int arg)
 	  daLogMsg("ERROR","TI Data available (%d) after SYNC event \n",
 		   davail);
 
-	  while(tiBReady())
+	  iflush = 0;
+	  while(tiBReady() && (++iflush < maxflush))
 	    {
 	      vmeDmaFlush(tiGetAdr32());
 	    }
@@ -503,7 +532,8 @@ rocTrigger(int arg)
 		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
 		       faSlot(ifa), davail);
 
-	      while(faBready(faSlot(ifa)))
+	      iflush = 0;
+	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
 		{
 		  vmeDmaFlush(faGetA32(faSlot(ifa)));
 		}
@@ -554,7 +584,7 @@ rocTrigger(int arg)
     if((scaler_period>0 &&
 	((now.tv_sec - last_time.tv_sec
 	  + ((double)now.tv_nsec - (double)last_time.tv_nsec)/1000000000L) >= scaler_period))) {
-#ifdef FADC_SCALER_BANKS      
+#ifdef FADC_SCALER_BANKS
       BANKOPEN(9250,BT_UI4,0);
       read_fadc_scalers(&dma_dabufp,0);
       BANKCLOSE;
@@ -610,12 +640,10 @@ void readUserFlags()
 
 #ifdef ENABLE_HCAL_PULSER
   /* Read the hcal pulser step info */
-  /*  printf("******************************************** /n");*/
-  /*    printf("flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);*/
+  /* disable if prescale=-1 */
   if(flag_pulserTriggerInput >= 0 && flag_pulserTriggerInput <6) {
-    flag_PULSER_ENABLED = flag_prescale[flag_pulserTriggerInput];
-    /*    printf("OK flag_pulserTriggerInput=%d\n",flag_pulserTriggerInput);*/
-	  printf("flag_prescale[%d]=%d\n",flag_pulserTriggerInput,flag_prescale[flag_pulserTriggerInput]);
+    flag_PULSER_ENABLED = flag_prescale[flag_pulserTriggerInput]+1;
+    /*	  printf("flag_prescale[%d]=%d\n",flag_pulserTriggerInput,flag_prescale[flag_pulserTriggerInput]);  */
     if(flag_PULSER_ENABLED) {
       flag_LED_NSTEPS=getint("pulser_nsteps");
       char ptext[50];
