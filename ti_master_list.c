@@ -19,15 +19,20 @@
 #define TI_ADDR  0
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x4A
+#define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
 #include "sdLib.h"
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
 #define BUFFERLEVEL 5
+
+#define TI_SYNCEVENT_INTERVAL 1000
 
 /*
   Global to configure the trigger source
@@ -86,7 +91,7 @@ rocDownload()
 
   /* Set needed TS input bits */
   tiEnableTSInput( TI_TSINPUT_1 );
-
+  //  tiSetTSInputDelay(1,73);// 0 = 8 ns - 4 ns steps - need 300 ns
   /* Load the trigger table that associates
    *  pins 21/22 | 23/24 | 25/26 : trigger1
    *  pins 29/30 | 31/32 | 33/34 : trigger2
@@ -100,14 +105,18 @@ rocDownload()
 
   tiSetTriggerHoldoff(3,0,0);  /* 3 trigger in don't care window */
   tiSetTriggerHoldoff(4,20,1);  /* 4 trigger in 20*3840ns window */
+//  tiSetTriggerHoldoff(4,25,1);  /* 4 trigger in 20*3840ns window */
 
   /* Set initial number of events per block */
   tiSetBlockLevel(blockLevel);
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
+  tiBusyOnBufferLevel(1);
 
   tiSetTriggerPulse(1,0,25,0);
+
+//  tiSetSyncEventInterval(TI_SYNCEVENT_INTERVAL);
 
   /*
     Increase the OT#2 width for the MPD input trigger
@@ -166,18 +175,6 @@ rocPrestart()
 
   tiStatus(0);
 
-  /* EXAMPLE: User bank of banks added to prestart event */
-  UEOPEN(500,BT_BANK,0);
-
-  /* EXAMPLE: Bank of data in User Bank 500 */
-  CBOPEN(1,BT_UI4,0);
-  *rol->dabufp++ = 0x11112222;
-  *rol->dabufp++ = 0x55556666;
-  *rol->dabufp++ = 0xaabbccdd;
-  CBCLOSE;
-
-  UECLOSE;
-
   printf("rocPrestart: User Prestart Executed\n");
 
 }
@@ -199,6 +196,7 @@ rocGo()
   blockLevel = tiGetCurrentBlockLevel();
   printf("rocGo: Block Level set to %d\n",blockLevel);
 
+  DALMAGO;
   tiStatus(0);
 
   /* Enable/Set Block Level on modules, if needed, here */
@@ -211,8 +209,8 @@ rocGo()
       if(rocTriggerSource == 1)
 	{
 	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-	  //	  tiSetRandomTrigger(1,0xd);
-	  tiSetRandomTrigger(1,0x4);
+	  tiSetRandomTrigger(1,0x6);
+	  //tiSetRandomTrigger(1,0xb);
 	}
 
       if(rocTriggerSource == 2)
@@ -223,9 +221,10 @@ rocGo()
 		- arg2 < 0xffff = arg2 times
 	  */
 	  tiSoftTrig(1,0xffff,100,0);
+	  //tiSoftTrig(1,1,100,0);
 	}
     }
-
+  DALMASTOP;
 }
 
 /****************************************
@@ -248,7 +247,10 @@ rocEnd()
     }
 
   tiSetOutputPort(1,1,0,0);
+
+  DALMAGO;
   tiStatus(0);
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -278,24 +280,23 @@ rocTrigger(int arg)
       dma_dabufp += dCnt;
     }
 
-  /* EXAMPLE: How to open a bank (name=5, type=ui4) and add data words by hand */
-  BANKOPEN(5,BT_UI4,blockLevel);
-  *dma_dabufp++ = tiGetIntCount();
-  *dma_dabufp++ = 0xdead;
-  *dma_dabufp++ = 0xcebaf111;
-  *dma_dabufp++ = 0xcebaf222;
-  BANKCLOSE;
-
   /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
 
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+void
 rocCleanup()
 {
 
   printf("%s: Reset all Modules\n",__FUNCTION__);
+
+  dalmaClose();
 
 }
 
