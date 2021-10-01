@@ -43,8 +43,8 @@ int scaler_inhibit=0;
 
 #define BLOCKLEVEL  1
 /* override this setting with 'bufferlevel' user string */
-#define BUFFERLEVEL 2
-#define SYNC_INTERVAL 10000
+#define BUFFERLEVEL 5
+#define SYNC_INTERVAL 1000
 
 /* Set to Zero to define a Front Panel Trigger source
    RANDOM_RATE defines the Pulser rate
@@ -216,7 +216,9 @@ readUserFlags()
   printf("%s: Setting bufferlevel = %d\n",
 	 __func__, bufferLevel);
   tsSetBlockBufferLevel(bufferLevel);
-  tdGSetBlockBufferLevel(bufferLevel);
+
+  // 30sept2021 8pm: Test turning off bufferlevel on TDs
+  tdGSetBlockBufferLevel(0);
 
   /* Order of operations..
      - check 'all'
@@ -420,7 +422,8 @@ rocDownload()
 
  /* Setup TDs - */
   tdInit(0,0,0,0);
-  tdGSetBlockBufferLevel(BUFFERLEVEL);
+  // 30sept2021 8pm: Test turning off bufferlevel on TDs
+  tdGSetBlockBufferLevel(0);
 
   /* No Need to add TD slaves here */
   /*tdAddSlave(TD_SLOT_1,4);  */   /* TI Slave - Slot 4 only */
