@@ -16,10 +16,10 @@
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
 /* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
-#define TI_ADDR  0x80000
+#define TI_ADDR  0x0
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x4A
+#define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
@@ -232,6 +232,12 @@ rocTrigger(int arg)
 
   /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
+
+}
+
+void
+rocLoad()
+{
 
 }
 
