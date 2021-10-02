@@ -167,18 +167,18 @@ rocDownload()
   // Lower deadtime trigger rules
   tiSetTriggerHoldoff(1,31,0);	// no more than 1 triggers in 31*16ns  -
   tiSetTriggerHoldoff(4,3,1);	// no more than 4 triggers in 3*3840ns
-#endif
-  tiFakeTriggerBankOnError(0);
-  tiSetFPInputReadout(1);
 
   /* Set initial number of events per block */
   tiSetBlockLevel(blockLevel);
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
+#endif
+  tiFakeTriggerBankOnError(0);
+  tiSetFPInputReadout(1);
 
   /* BR: enable busy when buffer level is exceeded */
-//  tiBusyOnBufferLevel(1);
+ tiBusyOnBufferLevel(1);
 
   /* Init the SD library so we can get status info */
   sdScanMask = 0;
@@ -223,7 +223,7 @@ rocDownload()
 
   vetrocGStatus(0);
 #endif
-
+  // tiSetBusySource(0x3,0);
   tiStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -556,6 +556,7 @@ rocTrigger(int arg)
 
   if(read_stat>0)
     { /* read the data here */
+
 #if(VETROC_ROMODE==2)
       ivt = 0;
 #else
@@ -677,6 +678,8 @@ rocTrigger(int arg)
   /* Check for SYNC Event */
   if(tiGetSyncEventFlag() == 1)
     {
+      printf("%s: %8d  Sync Event \n",
+	     __func__, tiGetIntCount());
       int iflush = 0, maxflush = 10;
       /* Check for data available */
       int davail = tiBReady();
