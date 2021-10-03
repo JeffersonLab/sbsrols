@@ -121,14 +121,37 @@ rocGo()
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
 
-  /* Get the broadcasted Block and Buffer Levels from TS or TI Master */
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
   bufferLevel = tiGetBroadcastBlockBufferLevel();
-  printf("rocGo: Block Level set to %d  Buffer Level set to %d\n",blockLevel,bufferLevel);
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
 
+#ifdef TI_SLAVE
   /* In case of slave, set TI busy to be enabled for full buffer level */
-  tiUseBroadcastBufferLevel(1);
 
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
+#endif
   /* Enable/Set Block Level on modules, if needed, here */
 
 }

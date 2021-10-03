@@ -40,6 +40,12 @@
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
 
+/*  Configuration file parsing */
+#define INTERNAL_FLAGS "ffile=/home/sbs-onl/cfg/helscaler.flags,hsactive=1,hsaddr=0xa10000"
+#define HELSCAL_ACTIVE "hsactive"
+#define HELSCAL_ADDR   "hsaddr"
+#include "usrstrutils.c"
+
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
 
@@ -65,6 +71,9 @@ extern int fadcA32Base, nfadc;
     if(rol->usrConfig)				\
       fadc250Config(rol->usrConfig);		\
   }
+
+/* Flag to enable/disable reading the helicity scaler */
+static int helScalerActive = 1;
 
 /* for the calculation of maximum data words in the block transfer */
 unsigned int MAXFADCWORDS=0;
@@ -168,6 +177,12 @@ rocDownload()
   /*****************
    *   HELICITY SCALER SETUP
    *****************/
+  init_strings();
+  if (getflag(HELSCAL_ADDR)==2){
+    char * tmpptr;
+    unsigned long newaddr = strtol(getstr(HELSCAL_ADDR),&tmpptr,0);
+    SISSetRelativeAddress(0,newaddr);
+  }
   initSIS(0);  // Don't do DMA initialization
   cshmSetScalerDebug(0);
 
@@ -232,8 +247,12 @@ rocPrestart()
     }
 
   /* Initialize the helicity scaler */
-  SIS3801_Prestart();
-  SISSetByteOrder(1);
+  init_strings();
+  helScalerActive = getint(HELSCAL_ACTIVE);
+  if (helScalerActive){
+    SIS3801_Prestart();
+    SISSetByteOrder(1);
+  }
 
 #ifdef TI_MASTER
   /* Set number of events per block (broadcasted to all connected TI Slaves)*/
@@ -257,13 +276,42 @@ rocGo()
   int fadc_mode = 0;
   unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
 
-  /* Get the current block level */
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("%s: Current Block Level = %d\n",
-	 __FUNCTION__,blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
+
+#ifdef TI_SLAVE
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
+#endif
 
   /*  Start the SIS3801 */
-  SIS3801_Go();
+  if (helScalerActive){
+    SIS3801_Go();
+  }
 
   faGSetBlockLevel(blockLevel);
 
@@ -336,7 +384,7 @@ rocEnd()
   /* FADC Disable */
   faGDisable(0);
 
-  SIS3801_End();  ///  Disable the helicity scaler LNE
+  SIS3801_End();  ///  Disable the helicity scaler LNE; always disable, without checking helScalerActive
 
   DALMAGO;
   sdStatus(0);
@@ -426,31 +474,32 @@ rocTrigger(int arg)
    *  Helicity scaler banks
    ***************************/
   //  Check for new data in the helicity scaler and output it to the data stream
-  SISInterrupt(0);
-  n = NumRing();
-  if (n>0) {
-    BANKOPEN(0xab01,BT_UI4,0);
-    *dma_dabufp++ = LSWAP(n);
-    for (i = 1; i <= n; i++) {
-      // logMsg("Has ring entry\n",0,0,0,0,0,0);
-      for (j = 0; j < NRING_CHANNEL+2; j++) {
-        value = ReadRing(i,j);
-        *dma_dabufp++ = LSWAP(value);
+  if (helScalerActive){
+    SISInterrupt(0);
+    n = NumRing();
+    if (n>0) {
+      BANKOPEN(0xab01,BT_UI4,0);
+      *dma_dabufp++ = LSWAP(n);
+      for (i = 1; i <= n; i++) {
+	// logMsg("Has ring entry\n",0,0,0,0,0,0);
+	for (j = 0; j < NRING_CHANNEL+2; j++) {
+	  value = ReadRing(i,j);
+	  *dma_dabufp++ = LSWAP(value);
+	}
       }
+      ResetRing(n);
+      BANKCLOSE;
     }
-    ResetRing(n);
+    //  Bank for the new event-trigger projected helicity info
+    BANKOPEN(0xab11,BT_UI4,0);
+    //  *dma_dabufp++ = LSWAP(0xab0000ab);
+    dma_dabufp += ReportNextHelicityReading(dma_dabufp);
+    BANKCLOSE;
+    //  Bank for new scaler summary block
+    BANKOPEN(0xab12,BT_UI4,0);
+    dma_dabufp += ReportLastScalerSummary(dma_dabufp);
     BANKCLOSE;
   }
-  //  Bank for the new event-trigger projected helicity info
-  BANKOPEN(0xab11,BT_UI4,0);
-  //  *dma_dabufp++ = LSWAP(0xab0000ab);
-  dma_dabufp += ReportNextHelicityReading(dma_dabufp);
-  BANKCLOSE;
-  //  Bank for new scaler summary block
-  BANKOPEN(0xab12,BT_UI4,0);
-  dma_dabufp += ReportLastScalerSummary(dma_dabufp);
-  BANKCLOSE;
-
 
   /* Check for SYNC Event */
   if(tiGetSyncEventFlag() == 1)
@@ -502,7 +551,7 @@ rocCleanup()
   printf("%s: Reset all FADCs\n",__FUNCTION__);
   faGReset(1);
 
-  SIS3801_End();  ///  Disable the helicity scaler LNE
+  SIS3801_End();  ///  Disable the helicity scaler LNE; always disable, without checking helScalerActive
 
 #ifdef TI_MASTER
   tiResetSlaveConfig();
