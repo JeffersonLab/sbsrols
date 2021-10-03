@@ -44,7 +44,7 @@ int scaler_inhibit=0;
 #define BLOCKLEVEL  1
 /* override this setting with 'bufferlevel' user string */
 #define BUFFERLEVEL 5
-#define SYNC_INTERVAL 1000
+#define SYNC_INTERVAL 10000
 
 /* Set to Zero to define a Front Panel Trigger source
    RANDOM_RATE defines the Pulser rate
@@ -105,7 +105,7 @@ char *armNames[nArms] =
 enum sbsSlaves
   {
    nhcalROC16 = 0,
-   sbsvme29ROC1,
+   nsbsvme29ROC1,
    nhcalROC17,
    nlhrsROC10,
    nbbgemROC19,
@@ -196,7 +196,9 @@ readUserFlags()
   for (jj = 0; jj<NPSF; jj++) {
     if(psfact[jj]>0) tsSetTriggerPrescale(2,jj,psfact[jj]);
   }
-
+  // tsSetFPInput(0x10);
+  // tsSetTriggerPrescale(2,4,0);
+  //tsSetTriggerPrescale(2,5,0);
   /* bufferLevel */
   flag = getflag("bufferlevel");
   if(flag)
@@ -422,20 +424,20 @@ rocDownload()
 
  /* Setup TDs - */
   tdInit(0,0,0,0);
-  // 30sept2021 8pm: Test turning off bufferlevel on TDs
+  // 30sept2021 8pm: Turn off bufferlevel on TDs
   tdGSetBlockBufferLevel(0);
+  /* Reset Active ROC Masks on all TD modules */
+  int islot;
+  for (islot = 0; islot < nTD; islot++)
+    {
+      tdTriggerReadyReset(tdSlot(islot));
+    }
 
-  /* No Need to add TD slaves here */
-  /*tdAddSlave(TD_SLOT_1,4);  */   /* TI Slave - Slot 4 only */
-
-  /* Init SD Board. and add TD Slaves */
+  /* Init SD Board. and set the initialzed TD Slots */
   sdInit(0);
   sdSetActiveVmeSlots(tdSlotMask());
   sdStatus(0);
 
-
-  /* Reset Active ROC Masks on all TD modules */
-  tsTriggerReadyReset();
 
 #ifdef SCALERS
   /* Make sure scalers are not inhbited */
@@ -479,14 +481,10 @@ rocPrestart()
   readUserFlags();
 
   /* Reset Active ROC Masks on all TD modules */
-#ifdef OLDTRR
-  tsTriggerReadyReset();
-#else
   for (islot = 0; islot < nTD; islot++)
     {
       tdTriggerReadyReset(tdSlot(islot));
     }
-#endif /* OLDTRR */
 
   /* Set Sync Event Interval  (0 disables sync events, max 65535) */
   tsSetSyncEventInterval(ival);
@@ -612,10 +610,7 @@ rocEnd()
     }
 
   DALMAGO;
-  for (islot = 0; islot < nTD; islot++)
-    {
-      tdPrintBusyCounters(tdSlot(islot));
-    }
+  tdGPrintBusyCounters();
   tdGStatus(0);
   tsStatus(0);
   DALMASTOP;
@@ -636,8 +631,7 @@ rocTrigger(int evntno)
 
 
   /* Check if this is a Sync Event */
-  /*  stat = tsGetSyncEventFlag(); */
-  stat = syncFlag;
+  stat = tsGetSyncEventFlag();
   if(stat) {
     printf("rocTrigger: Got Sync Event!! Block # = %d\n",evntno);
     usrDebugFlag=0;
@@ -659,10 +653,12 @@ rocTrigger(int evntno)
     }
   else
     { /* TS Data is already in a bank structure.  Bump the pointer */
+#ifdef DEBUGSYNCEVENT
       if(stat) {
 	printf("rocTrigger: Sync Event data: 0x%08x 0x%08x 0x%08x 0x%08x\n",
 	       *dma_dabufp, *(dma_dabufp+1), *(dma_dabufp+2), *(dma_dabufp+3));
       }
+#endif
       dma_dabufp += dCnt;
     }
 
