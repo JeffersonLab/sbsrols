@@ -32,6 +32,9 @@
 #define BLOCKLEVEL 1
 #define BUFFERLEVEL 10
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
 /*
   enable triggers (random or fixed rate) from internal pulser
  */
@@ -118,25 +121,9 @@ void
 rocPrestart()
 {
 
-#ifdef TI_MASTER
-  /* Set number of events per block (broadcasted to all connected TI Slaves)*/
-  tiSetBlockLevel(blockLevel);
-  printf("rocPrestart: Block Level set to %d\n",blockLevel);
-#endif
-
+  DALMAGO;
   tiStatus(0);
-
-  /* EXAMPLE: User bank of banks added to prestart event */
-  UEOPEN(500,BT_BANK,0);
-
-  /* EXAMPLE: Bank of data in User Bank 500 */
-  CBOPEN(1,BT_UI4,0);
-  *rol->dabufp++ = 0x11112222;
-  *rol->dabufp++ = 0x55556666;
-  *rol->dabufp++ = 0xaabbccdd;
-  CBCLOSE;
-
-  UECLOSE;
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -153,13 +140,36 @@ rocGo()
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
 
-  /* Get the current Block Level */
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("rocGo: Block Level set to %d\n",blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
 
 #ifdef TI_SLAVE
   /* In case of slave, set TI busy to be enabled for full buffer level */
-  tiUseBroadcastBufferLevel(1);
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
 #endif
 
   /* Enable/Set Block Level on modules, if needed, here */
@@ -209,7 +219,9 @@ rocEnd()
 #endif
 #endif
 
+  DALMAGO;
   tiStatus(0);
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -253,12 +265,19 @@ rocTrigger(int arg)
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
+void
 rocCleanup()
 {
   printf("%s: Reset all Modules\n",__FUNCTION__);
 #ifdef TI_MASTER
   tiResetSlaveConfig();
 #endif
+  dalmaClose();
 }
 
 
