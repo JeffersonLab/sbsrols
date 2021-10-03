@@ -132,7 +132,18 @@ rocDownload()
 #endif
   /* Set prompt trigger width to 100ns = (23 + 2) * 4ns */
   tiSetPromptTriggerWidth(23);
-
+  /*
+0: SWA
+1: SWB
+2: P2
+3: FP-FTDC
+4: FP-FADC
+5: FP
+6: Unused
+7: Loopack
+8-15: Fiber 1-8
+   */
+  tiSetBusySource(0x14,0);
   tiStatus(0);
 #ifdef USE_FADC
   /* FADC library init */
@@ -210,8 +221,8 @@ rocPrestart()
    int itdc;
 
   /* INIT C1190/C1290 - Must be A32 for 2eSST */
-  UINT32 list[NUM_V1190] = {0x100000,0x180000};
-
+ UINT32 list[NUM_V1190] = {0x100000,0x180000};
+ // UINT32 list[NUM_V1190] = {0x100000};
   tdc1190InitList(list,NUM_V1190,2);
 
   unsigned int mcstaddr = 0x09000000;
@@ -257,9 +268,37 @@ rocGo()
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
 
-  /* Get the current Block Level */
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("rocGo: Block Level set to %d\n",blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
+
+#ifdef TI_SLAVE
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
+#endif
 
 #ifdef USE_FADC
   faGSetBlockLevel(blockLevel);
