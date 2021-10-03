@@ -55,6 +55,9 @@
 #include "tiprimary_list.c" /* source required for CODA */
 #include "sdLib.h"
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
 #ifdef ENABLE_FADC
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
@@ -293,14 +296,11 @@ rocPrestart()
       faEnableSyncReset(faSlot(ifa));
     }
 
-  faGStatus(0);
-
   /***************************************
    *   SD SETUP
    ***************************************/
   sdInit(0);   /* Initialize the SD library */
   sdSetActiveVmeSlots(faScanMask()); /* Use the fadcSlotMask to configure the SD */
-  sdStatus();
 #endif /* ENABLE_FADC */
 
 #ifdef ENABLE_F1
@@ -395,8 +395,17 @@ rocPrestart()
   printf("rocPrestart: Block Level set to %d\n",blockLevel);
 #endif /* TI_MASTER */
 
-
+  DALMAGO;
+#ifdef ENABLE_FADC
+  /* FADC Event status - Is all data read out */
+  faGStatus(0);
+#endif /* ENABLE_FADC */
+#ifdef ENABLE_F1
+  f1GStatus(0);
+#endif /* End: ENABLE_F1 */
   tiStatus(0);
+  sdStatus();
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -408,10 +417,41 @@ rocGo()
   int fadc_mode = 0;
   unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
 
-  /* Get the current block level */
+  /* Print out the Run Number and Run Type (config id) */
+  printf("rocGo: Activating Run Number %d, Config id = %d\n",
+	 rol->runNumber,rol->runType);
+
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("%s: Current Block Level = %d\n",
-	 __FUNCTION__,blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
+
+#ifdef TI_SLAVE
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
+#endif
 
 #ifdef ENABLE_FADC
   faGSetBlockLevel(blockLevel);
@@ -454,11 +494,7 @@ rocEnd()
 #ifdef ENABLE_FADC
   /* FADC Disable */
   faGDisable(0);
-
-  /* FADC Event status - Is all data read out */
-  faGStatus(0);
 #endif /* ENABLE_FADC */
-
 
 #ifdef ENABLE_F1
   /* F1TDC Event status - Is all data read out */
@@ -470,8 +506,18 @@ rocEnd()
   }
 #endif /* End: ENABLE_F1 */
 
+  DALMAGO;
+#ifdef ENABLE_FADC
+  /* FADC Event status - Is all data read out */
+  faGStatus(0);
+#endif /* ENABLE_FADC */
+#ifdef ENABLE_F1
+  f1GStatus(0);
+#endif /* End: ENABLE_F1 */
   tiStatus(0);
   sdStatus();
+  DALMASTOP;
+
 #ifdef ENABLE_HCAL_PULSER
   hcalClkIn(0); /* Turn off LEDs at the end */
 #endif
@@ -566,7 +612,7 @@ rocTrigger(int arg)
 
 #ifdef ENABLE_F1
 #ifdef READOUT_F1
-  int roflag = 1;  
+  int roflag = 1;
 
   if(NF1TDC <= 1) {
     roflag = 1; /* DMA Transfer */
@@ -630,7 +676,7 @@ rocTrigger(int arg)
       *dma_dabufp++ = LSWAP(0xda000bad);
 
       /* Just clear the F1 boards here worry about syncronizing later */
-      f1GClear();
+      f1Clear(F1_SLOT);
 
     }
 
@@ -656,7 +702,7 @@ rocTrigger(int arg)
 		   davail,roCount);
 
 	  iflush = 0;
-	  /* 
+	  /*
 	  while(tiBReady() && (++iflush < maxflush))
 	    {
 	      vmeDmaFlush(tiGetAdr32());
@@ -751,9 +797,21 @@ rocTrigger(int arg)
 
 }
 
+
+void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
 void
 rocCleanup()
 {
+
+#ifdef TI_MASTER
+  tiResetSlaveConfig();
+#endif
+  dalmaClose();
 
 #ifdef ENABLE_FADC
   printf("%s: Reset all FADCs\n",__FUNCTION__);

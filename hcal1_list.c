@@ -44,6 +44,10 @@
 #include "dmaBankTools.h"
 #include "tiprimary_list.c" /* source required for CODA */
 #include "sdLib.h"
+
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
 #ifdef ENABLE_FADC
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
@@ -51,7 +55,7 @@
 #include "hcal_usrstrutils.c" /* So we can read from a flags file */
 
 #ifdef ENABLE_HCAL_PULSER
-#include "hcalLib.h"   /* Source of hcalClkIn is here (../linuxvme/include/hcalLib.h?? */
+#include "hcalLib.h"   /* Source of hcalClkIn is here (../linuxvme/include/hcalLib.h??  and ../linuxvme/hcal_pulser/hcalLib.c   */
 #endif
 
 #define BUFFERLEVEL 1
@@ -107,7 +111,7 @@ unsigned int HCAL_LED_C_STEP;
 unsigned int HCAL_LED_C_NSTEP;
 #endif
 
-
+int pulser_TRIG, cosmic_TRIG, hcal_sum_TRIG;
 
 
 /* function prototypes */
@@ -276,8 +280,6 @@ rocPrestart()
       faEnableSyncReset(faSlot(ifa));
     }
 
-  faGStatus(0);
-
   /***************************************
    *   SD SETUP
    ***************************************/
@@ -285,50 +287,28 @@ rocPrestart()
   sdSetActiveVmeSlots(faScanMask()); /* Use the fadcSlotMask to configure the SD */
 #endif /* ENABLE_FADC */
 
-  sdStatus();
-
-
 #ifdef ENABLE_HCAL_PULSER
   if(flag_PULSER_ENABLED) {
     HCAL_LED_ITER=0;
     HCAL_LED_COUNT=0;
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("HCAL Pulser sequence %i steps: ",flag_LED_NSTEPS);
+    printf("HCAL Pulser sequence: ");
     for(i = 0 ; i < flag_LED_NSTEPS; i++) {
       printf(" %d/%d",flag_LED_STEP[i],flag_LED_NSTEP[i]);
     }
     printf("\n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-
+    int idum;
     /* Clock in the first setting */
-    /*    .... first, clear all boxes...twice, if we don't switch to clocking in to each board separately */
     HCAL_LED_C_STEP = flag_LED_STEP[0];
     HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
+    for(idum=0;idum<14;idum++){hcalClkIn(0);}
+    hcalClkIn(HCAL_LED_C_STEP);
+    hcalClkIn(HCAL_LED_C_STEP);  /* into both boards of first box */
+      printf("NOT Re-enabling pulser\n");
+      /*hcalClkIn(-1);*/  /* re-enable pulser (suspended during clock-in */
+  } else {
     int idum;
-      for(idum=0;idum<16;idum++){
-    hcalClkIn(0);
-      }
-    hcalClkIn(HCAL_LED_C_STEP);
-    /*    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    */  
-} else {
     printf("Pulser_enabled is *False*");
-    hcalClkIn(0);
+    for(idum=0;idum<16;idum++){hcalClkIn(0);}
   }
 
 #endif
@@ -340,7 +320,14 @@ rocPrestart()
 #endif /* TI_MASTER */
 
 
+
+  DALMAGO;
   tiStatus(0);
+  sdStatus();
+#ifdef ENABLE_FADC
+  faGStatus(0);
+#endif /* ENABLE_FADC */
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -352,10 +339,37 @@ rocGo()
   int fadc_mode = 0;
   unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
 
-  /* Get the current block level */
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("%s: Current Block Level = %d\n",
-	 __FUNCTION__,blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
+
+#ifdef TI_SLAVE
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
+#endif
 
 #ifdef ENABLE_FADC
   faGSetBlockLevel(blockLevel);
@@ -394,18 +408,24 @@ rocEnd()
 #ifdef ENABLE_FADC
   /* FADC Disable */
   faGDisable(0);
+#endif /* ENABLE_FADC */
 
+  DALMAGO;
+#ifdef ENABLE_FADC
   /* FADC Event status - Is all data read out */
   faGStatus(0);
 #endif /* ENABLE_FADC */
-
   tiStatus(0);
   sdStatus();
+  DALMASTOP;
+
 #ifdef ENABLE_HCAL_PULSER
-  hcalClkIn(0); /* Turn off LEDs at the end */
+  int idum;
+    for(idum=0;idum<16;idum++){hcalClkIn(0);} /* Turn off LEDs at the end */
+    printf("Cleared pulser boxes\n");
 #endif
   /* Turn off all output ports */
-  tiSetOutputPort(0,0,0,0);
+    /*  tiSetOutputPort(0,0,0,0);   */
 
 #ifdef FADC_SCALERS
   /* Resume stand alone scaler server */
@@ -437,7 +457,15 @@ rocTrigger(int arg)
   vmeDmaConfig(2,5,1);
   dCnt = tiReadTriggerBlock(dma_dabufp);
 
+ int TRIG_word=*(dma_dabufp+2);
+ /* printf("TRIG_word %8X %8x %2X\n",TRIG_word,TRIG_word&0X7000000,(TRIG_word&0X7000000)>>24);*/
+ pulser_TRIG=(TRIG_word&0X2000000)>>25;
+ cosmic_TRIG=(TRIG_word&0X1000000)>>24;
+ hcal_sum_TRIG=(TRIG_word&0X4000000)>>26;
 
+ /* if(pulser_TRIG){printf("pulser\n");}
+ if(cosmic_TRIG){printf("cosmic\n");}
+ if(hcal_sum_TRIG){printf("hcal_sum\n");}*/
   /*
    int idum;
     printf("TI says trigger block length is %d \n",dCnt);
@@ -545,7 +573,7 @@ rocTrigger(int arg)
     }
 
 #ifdef ENABLE_HCAL_PULSER
-  if(flag_PULSER_ENABLED) {
+  if(flag_PULSER_ENABLED && pulser_TRIG) {
     HCAL_LED_COUNT++;
     BANKOPEN(BANK_HCAL_PULSER,BT_UI4,0);
     /**dma_dabufp++ = LSWAP(tiGetIntCount());*/
@@ -554,7 +582,7 @@ rocTrigger(int arg)
     *dma_dabufp++ = LSWAP(HCAL_LED_COUNT);
     *dma_dabufp++ = LSWAP((HCAL_LED_ITER<<22)|(HCAL_LED_C_STEP<<16)|HCAL_LED_COUNT);
     BANKCLOSE;
-    /* Run the HCAL pulser clock in code */
+    /* Run the HCAL pulser clock-in code */
     if(HCAL_LED_COUNT>=HCAL_LED_C_NSTEP) {
       HCAL_LED_COUNT=0;
       HCAL_LED_ITER++;
@@ -566,6 +594,9 @@ rocTrigger(int arg)
       printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
         HCAL_LED_ITER,HCAL_LED_C_STEP,tiGetIntCount());
       hcalClkIn(HCAL_LED_C_STEP);
+      hcalClkIn(HCAL_LED_C_STEP);   /* into both boards of one box */
+      printf("Re-enabling pulser\n");
+       hcalClkIn(-1);  /* re-enable pulser (suspended during clock-in */
       /*      hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);
@@ -604,8 +635,18 @@ rocTrigger(int arg)
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
+void
 rocCleanup()
 {
+#ifdef TI_MASTER
+  tiResetSlaveConfig();
+#endif
+  dalmaClose();
 
 #ifdef ENABLE_FADC
   printf("%s: Reset all FADCs\n",__FUNCTION__);
