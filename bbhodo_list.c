@@ -222,19 +222,18 @@ rocPrestart()
 
    typedef struct
    {
-     unsigned int addr;
-     unsigned int EdgeResolution;
-     unsigned int EdgeDetectionConfig;
-     unsigned int WindowWidth;
-     unsigned int WindowOffset;
+     int EdgeResolution;
+     int EdgeDetectionConfig;
+     int WindowWidth;
+     int WindowOffset;
    } tdc1190_config;
 
    tdc1190_config Common1190Config =
      {
-      100,
-      3
-      2000,
-      -2000
+      .EdgeResolution = 100,
+      .EdgeDetectionConfig = 3,
+      .WindowWidth = 2000,
+      .WindowOffset = -2000
      };
 
 
@@ -245,22 +244,26 @@ rocPrestart()
 
   unsigned int mcstaddr = 0x09000000;
   if(C1190_ROMODE==0)  tdc1190InitMCST(mcstaddr);
+
   tdc1190GSetTriggerMatchingMode();
-  tdc1190GSetEdgeResolution(100);
-  tdc1190GSetEdgeDetectionConfig(3);
-  tdc1190GSetWindowWidth(550); // ns
-  tdc1190GSetWindowOffset(-300); // ns
+  tdc1190GSetEdgeResolution(Common1190Config.EdgeResolution);
+  tdc1190GSetEdgeDetectionConfig(Common1190Config.EdgeDetectionConfig);
+  tdc1190GSetWindowWidth(Common1190Config.WindowWidth); // ns
+  tdc1190GSetWindowOffset(Common1190Config.WindowOffset); // ns
   tdc1190GEnableTriggerTimeSubtraction(); // Uses the beginning of the match window instead of the latest bunch reset
 
   tdc1190GTriggerTime(1); // flag = 1 enable (= 0 disable) writing out of the Extended Trigger Time Tag in the output buffer.
   tdc1190ConfigureGReadout(C1190_ROMODE);
+
   for(itdc=0; itdc<NUM_V1190; itdc++)
     {
+#ifdef WRITE_TWICE
       tdc1190SetTriggerMatchingMode(itdc);
       tdc1190SetEdgeResolution(itdc,100);
       tdc1190SetEdgeDetectionConfig(itdc,3);
       tdc1190SetWindowWidth(itdc,2000); // ns
       tdc1190SetWindowOffset(itdc,-2000); // ns
+#endif
       tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
     }
 
