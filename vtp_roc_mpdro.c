@@ -146,6 +146,12 @@ rocPrestart()
   /* Initialize the TI Interface */
   vtpTiLinkInit();
 
+  /* Write in the Destination IP and port obtained from platform */
+  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
+  emuport = rol->rlinkP->port;
+  daLogMsg("INFO"," EMU IP = 0x%08x  Port= %d\n",emuip, emuport);
+
+  vtpRocSetTcpCfg2(0, emuip, emuport);
 
    /* Readback the VTP 10Gig network registers and connect */
   unsigned char ipaddr[4];
