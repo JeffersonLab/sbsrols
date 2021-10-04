@@ -220,6 +220,24 @@ rocPrestart()
 #endif /* USE_FADC */
    int itdc;
 
+   typedef struct
+   {
+     unsigned int addr;
+     unsigned int EdgeResolution;
+     unsigned int EdgeDetectionConfig;
+     unsigned int WindowWidth;
+     unsigned int WindowOffset;
+   } tdc1190_config;
+
+   tdc1190_config Common1190Config =
+     {
+      100,
+      3
+      2000,
+      -2000
+     };
+
+
   /* INIT C1190/C1290 - Must be A32 for 2eSST */
  UINT32 list[NUM_V1190] = {0x100000,0x180000};
  // UINT32 list[NUM_V1190] = {0x100000};
