@@ -28,7 +28,6 @@
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
-#include "c1190Lib.h"
 
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
@@ -39,7 +38,11 @@
 
 #define USE_FADC 1
 #ifdef USE_FADC
-/* FADC Library Variables */
+
+/*
+   FADC Library Variables
+*/
+
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
 extern int nfadc;
@@ -58,7 +61,18 @@ extern unsigned int  fadcA32Base;
   }
 /* for the calculation of maximum data words in the block transfer */
 unsigned int MAXFADCWORDS=0;
+
 #endif /* USE_FADC */
+
+#define USE_C1190
+#ifdef USE_C1190
+
+/*
+  CAEN1190 TDC library variables
+*/
+#define C1190_BUSY
+
+#include "c1190Lib.h"
 
 /* CAEN 1190/1290 specific definitions */
 #define NUM_V1190 2
@@ -68,6 +82,9 @@ unsigned int MAXFADCWORDS=0;
 
 /* Clear counter at 1190 syncevent */
 unsigned int c1190ClearCounter = 0;
+
+#endif // USE_C1190
+
 
 /*
   Global to configure the trigger source
@@ -132,19 +149,42 @@ rocDownload()
 #endif
   /* Set prompt trigger width to 100ns = (23 + 2) * 4ns */
   tiSetPromptTriggerWidth(23);
+
   /*
-0: SWA
-1: SWB
-2: P2
-3: FP-FTDC
-4: FP-FADC
-5: FP
-6: Unused
-7: Loopack
-8-15: Fiber 1-8
-   */
-  tiSetBusySource(0x14,0);
+    Busy source mask bit defs:
+    TI_BUSY_SWA              (1<<0)
+    TI_BUSY_SWB              (1<<1)
+    TI_BUSY_P2               (1<<2)
+    TI_BUSY_FP_FTDC          (1<<3)
+    TI_BUSY_FP_FADC          (1<<4)
+    TI_BUSY_FP               (1<<5)
+    TI_BUSY_TRIGGER_LOCK     (1<<6)
+    TI_BUSY_LOOPBACK         (1<<7)
+    TI_BUSY_HFBR1            (1<<8)
+    TI_BUSY_HFBR2            (1<<9)
+    TI_BUSY_HFBR3            (1<<10)
+    TI_BUSY_HFBR4            (1<<11)
+    TI_BUSY_HFBR5            (1<<12)
+    TI_BUSY_HFBR6            (1<<13)
+    TI_BUSY_HFBR7            (1<<14)
+    TI_BUSY_HFBR8            (1<<15)
+  */
+  unsigned int busymask = 0;
+
+#ifdef USE_FADC
+  busymask |= TI_BUSY_FP_FADC;
+#endif
+
+#ifdef USE_C1190
+#ifdef C1190_BUSY
+  busymask |= TI_BUSY_P2;
+#endif
+#endif
+
+  tiSetBusySource(busymask, 0);
+
   tiStatus(0);
+
 #ifdef USE_FADC
   /* FADC library init */
   faInit(FADC_ADDR, FADC_INCR, NFADC, FA_INIT_SKIP);
@@ -152,6 +192,15 @@ rocDownload()
   faGStatus(0);
 
 #endif
+
+#ifdef USE_C1190
+
+  /* INIT C1190/C1290 - Must be A32 for 2eSST */
+  UINT32 list[NUM_V1190] = {0x100000,0x180000};
+  // UINT32 list[NUM_V1190] = {0x100000};
+  tdc1190InitList(list,NUM_V1190,2);
+
+#endif // USE_C1190
 
 
   printf("rocDownload: User Download Executed\n");
@@ -218,9 +267,15 @@ rocPrestart()
   //  faSDC_Sync();
 
 #endif /* USE_FADC */
-   int itdc;
 
-   typedef struct
+
+#ifdef USE_C1190
+  /*
+    CAEN1190 TDC Prestart
+  */
+  int itdc;
+
+  typedef struct
    {
      int EdgeResolution;
      int EdgeDetectionConfig;
@@ -236,11 +291,11 @@ rocPrestart()
       .WindowOffset = -2000
      };
 
-
-  /* INIT C1190/C1290 - Must be A32 for 2eSST */
- UINT32 list[NUM_V1190] = {0x100000,0x180000};
- // UINT32 list[NUM_V1190] = {0x100000};
-  tdc1190InitList(list,NUM_V1190,2);
+   /* tdc1190GReset(); */
+   /* INIT C1190/C1290 - Must be A32 for 2eSST */
+   UINT32 list[NUM_V1190] = {0x100000,0x180000};
+   // UINT32 list[NUM_V1190] = {0x100000};
+   tdc1190InitList(list,NUM_V1190,2);
 
   unsigned int mcstaddr = 0x09000000;
   if(C1190_ROMODE==0)  tdc1190InitMCST(mcstaddr);
@@ -255,6 +310,12 @@ rocPrestart()
   tdc1190GTriggerTime(1); // flag = 1 enable (= 0 disable) writing out of the Extended Trigger Time Tag in the output buffer.
   tdc1190ConfigureGReadout(C1190_ROMODE);
 
+#ifdef C1190_BUSY
+  /* For the BUSY back to the TI (via p2 connector) */
+  tdc1190GSetAlmostFullLevel(10240);
+  tdc1190GSetOutProg(2);
+#endif
+
   for(itdc=0; itdc<NUM_V1190; itdc++)
     {
 #ifdef WRITE_TWICE
@@ -266,12 +327,20 @@ rocPrestart()
 #endif
       tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
     }
+#endif // USE_C1190
+
+
 
   DALMAGO;
+
 #ifdef USE_FADC
   faGStatus(0);
 #endif
-  tdc1190GStatus(1);
+
+#ifdef USE_C1190
+  tdc1190GStatus(0);
+#endif // USE_C1190
+
   tiStatus(0);
   DALMASTOP;
 
@@ -282,9 +351,6 @@ rocPrestart()
 void
 rocGo()
 {
-  int fadc_mode = 0;
-  unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
-  tiSetBlockLimit(0);
   /* Print out the Run Number and Run Type (config id) */
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
@@ -299,6 +365,7 @@ rocGo()
 	 tiGetBlockBufferLevel(),
 	 bufferLevel);
 
+  tiSetBlockLimit(0);
 #ifdef TI_SLAVE
   /* In case of slave, set TI busy to be enabled for full buffer level */
 
@@ -322,6 +389,9 @@ rocGo()
 #endif
 
 #ifdef USE_FADC
+  int fadc_mode = 0;
+  unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
+
   faGSetBlockLevel(blockLevel);
 
   /* Get the FADC mode and window size to determine max data size */
@@ -342,8 +412,16 @@ rocGo()
   faGEnable(0, 0);
 #endif
 
+#ifdef USE_C1190
+  /*
+    CAEN1190 TDC Go
+  */
 
   tdc1190GSetBLTEventNumber(blockLevel);
+
+  /* Reset c1190 clear counter */
+  c1190ClearCounter = 0;
+#endif // USE_C1190
 
 #ifdef TI_MASTER
   if(rocTriggerSource != 0)
@@ -369,9 +447,6 @@ rocGo()
 	}
     }
 #endif
-
-  /* Reset c1190 clear counter */
-  c1190ClearCounter = 0;
 
   /* Interrupts/Polling enabled after conclusion of rocGo() */
 }
@@ -401,9 +476,13 @@ rocEnd()
 #endif
 
   DALMAGO;
+#ifdef USE_C1190
   tdc1190GStatus(0);
   printf("   c1190 syncevent clear (c1190ClearCounter) = %d\n",
 	 c1190ClearCounter);
+#endif // USE_C1190
+
+
 #ifdef USE_FADC
   faGStatus(0);
 #endif
@@ -490,6 +569,11 @@ rocTrigger(int arg)
   BANKCLOSE;
 #endif
 
+#ifdef USE_C1190
+  /*
+    CAEN1190 TDC Readout
+  */
+
   BANKOPEN(C1190_BANKID,BT_UI4,blockLevel);
   /* Check for valid data here */
   scanmask = tdc1190ScanMask();
@@ -528,6 +612,8 @@ rocTrigger(int arg)
     }
   BANKCLOSE;
 
+#endif // USE_C1190
+
   /* Check for SYNC Event or Bufferlevel == 1 */
   if((tiGetSyncEventFlag() == 1) || (tiGetBlockBufferLevel() == 1))
     {
@@ -564,6 +650,11 @@ rocTrigger(int arg)
 	}
 #endif
 
+#ifdef USE_C1190
+      /*
+	CAEN1190 TDC Sync Event Check
+      */
+
       /* Check for ANY data in 1190 TDCs */
       datascan = tdc1190GDready(1);
       static int max_complaints = 10;
@@ -589,6 +680,8 @@ rocTrigger(int arg)
 		}
 	    }
 	}
+#endif // USE_C1190
+
 
     }
 
