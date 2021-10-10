@@ -16,6 +16,10 @@
 // These are now defined in the config file
 //   e.g. ~/vtp/cfg/sbsvtp3.config
 char COMMON_MODE_FILENAME[250], PEDESTAL_FILENAME[250];
+char APV_CONFIG_FILENAME[250];
+
+#define DEFAULT_APV_CONFIG "/home/sbs-onl/cfg/vtp_config_TS.cfg"
+
 
 void
 vtpSetPedSubtractionMode(int enable) // routine prototype
@@ -50,23 +54,28 @@ vtp_mpd_setup()
   uint32_t vtpFiberMaskToInit;
 
 
-  /* default config filenames, if they are not defined in COOL */
-  char *apvConfigFilename = "/home/sbs-onl/cfg/vtp_config_TS.cfg";
-
   if(vtpMpdConfigInit(rol->usrConfig) == ERROR)
     {
       printf("%s: Error using rol->usrConfig %s.\n",
 	     __func__, rol->usrConfig);
 
       printf("  trying %s\n",
-	     apvConfigFilename);
+	     DEFAULT_APV_CONFIG);
 
-      if(vtpMpdConfigInit(apvConfigFilename) == ERROR)
+      if(vtpMpdConfigInit(DEFAULT_APV_CONFIG) == ERROR)
 	{
 	  daLogMsg("ERROR","Error loading APV configuration file");
 
 	  return;
 	}
+      else
+	{
+	  strncpy(APV_CONFIG_FILENAME, DEFAULT_APV_CONFIG, 250);
+	}
+    }
+  else
+    {
+      strncpy(APV_CONFIG_FILENAME, rol->usrConfig, 250);
     }
 
   vtpMpdConfigLoad();
@@ -88,9 +97,34 @@ vtp_mpd_setup()
   }
 
   /* Read Config file and Intialize VTP */
+  extern int vtpReadConfigFile(char *filename);
+  extern int vtpDownloadAll();
+
   vtpInitGlobals();
 
-  vtpConfig(vtpConfigFilename);
+  if(vtpReadConfigFile(rol->usrString) == ERROR)
+    {
+      printf("%s: Error using rol->usrString %s.\n",
+	     __func__, rol->usrString);
+
+      printf("  trying %s\n",
+	     DEFAULT_VTP_CONFIG);
+
+      if(vtpConfig(DEFAULT_VTP_CONFIG) == ERROR)
+	{
+	  daLogMsg("ERROR","Error loading VTP configuration file");
+	  return;
+	}
+      else
+	{
+	  strncpy(VTP_CONFIG_FILENAME, DEFAULT_VTP_CONFIG, 250);
+	}
+    }
+  else
+    {
+      strncpy(VTP_CONFIG_FILENAME, rol->usrString, 250);
+    }
+  vtpDownloadAll();
 
   vtpMpdGetCommonModeFilename(COMMON_MODE_FILENAME);
   vtpMpdGetPedestalFilename(PEDESTAL_FILENAME);
