@@ -73,7 +73,7 @@
 #include "hcalLib.h"
 #endif
 
-#define BUFFERLEVEL 1
+#define BUFFERLEVEL 5
 
 #ifdef ENABLE_FADC
 /* FADC Library Variables */
@@ -190,6 +190,8 @@ rocDownload()
 
   /* Add trigger latch pattern to datastream */
   tiSetFPInputReadout(1);
+#else
+  tiSetFiberSyncDelay(0x9);
 #endif /* TI_MASTER */
   tiSetBusySource(0xA,0); // adding F1 busy AC 10/01/2021
 
@@ -211,7 +213,7 @@ rocDownload()
   set_runstatus(0);
 #endif
 
-  tiStatus(0);
+  tiStatus(1);
   sdStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -375,9 +377,9 @@ rocPrestart()
     /* Clock in the first setting */
     HCAL_LED_C_STEP = flag_LED_STEP[0];
     HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
-    hcalClkIn(HCAL_LED_C_STEP);
+    /*BQ     hcalClkIn(HCAL_LED_C_STEP);*/
   } else {
-    hcalClkIn(0);
+    /*BQ      hcalClkIn(0);*/
   }
 
 #endif
@@ -403,7 +405,7 @@ rocPrestart()
 #ifdef ENABLE_F1
   f1GStatus(0);
 #endif /* End: ENABLE_F1 */
-  tiStatus(0);
+  tiStatus(1);
   sdStatus();
   DALMASTOP;
 
@@ -514,15 +516,15 @@ rocEnd()
 #ifdef ENABLE_F1
   f1GStatus(0);
 #endif /* End: ENABLE_F1 */
-  tiStatus(0);
+  tiStatus(1);
   sdStatus();
   DALMASTOP;
 
 #ifdef ENABLE_HCAL_PULSER
-  hcalClkIn(0); /* Turn off LEDs at the end */
+  /*BQ  hcalClkIn(0);  // Turn off LEDs at the end  */
 #endif
   /* Turn off all output ports */
-  tiSetOutputPort(0,0,0,0);
+  /*BQ  tiSetOutputPort(0,0,0,0);*/
 
 #ifdef FADC_SCALERS
   /* Resume stand alone scaler server */
@@ -683,6 +685,18 @@ rocTrigger(int arg)
   *dma_dabufp++ = LSWAP(0xda0000ff); /* Event EOB */
   BANKCLOSE;
 
+  unsigned int scaler1 = 0, scaler2 = 0;
+  BANKOPEN(0x0F10, BT_UI4, 0);
+  for(islot = 0; islot < NF1TDC; islot++)
+    {
+      scaler1 = 0; scaler2 = 0;
+      f1GetScalers(f1Slot(islot), &scaler1, &scaler2);
+      *dma_dabufp++ = f1Slot(islot);
+      *dma_dabufp++ = scaler1;
+      *dma_dabufp++ = scaler2;
+    }
+  BANKCLOSE;
+
 #ifdef DISABLE_MULTIBLOCK_READOUT
   /* vmeDmaConfig(2,5,1); */
 #endif
@@ -750,7 +764,7 @@ rocTrigger(int arg)
 		  vmeDmaFlush(f1GetA32(f1Slot(islot)));
 		  }*/
 	      /* Just clear the boards here */
-	      f1GClear();
+	      f1Clear(f1Slot(islot));
 
 #ifdef OLDDMAFLUSH
 	      unsigned int trash[512];

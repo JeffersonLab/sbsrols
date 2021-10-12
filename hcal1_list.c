@@ -58,7 +58,7 @@
 #include "hcalLib.h"   /* Source of hcalClkIn is here (../linuxvme/include/hcalLib.h??  and ../linuxvme/hcal_pulser/hcalLib.c   */
 #endif
 
-#define BUFFERLEVEL 1
+#define BUFFERLEVEL 5
 
 #ifdef ENABLE_FADC
 /* FADC Library Variables */
@@ -173,6 +173,8 @@ rocDownload()
 
   /* Add HCAL2 to port 1*/
   tiAddSlave(1);
+#else
+  tiSetFiberSyncDelay(0x9);
 #endif /* TI_MASTER */
 
 
@@ -194,7 +196,7 @@ rocDownload()
   set_runstatus(0);
 #endif
 
-  tiStatus(0);
+  tiStatus(1);
   sdStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -303,8 +305,8 @@ rocPrestart()
     for(idum=0;idum<14;idum++){hcalClkIn(0);}
     hcalClkIn(HCAL_LED_C_STEP);
     hcalClkIn(HCAL_LED_C_STEP);  /* into both boards of first box */
-      printf("NOT Re-enabling pulser\n");
-      /*hcalClkIn(-1);*/  /* re-enable pulser (suspended during clock-in */
+      printf("Re-enabling pulser\n");
+      hcalClkIn(69);  /* re-enable pulser (suspended during clock-in) */
   } else {
     int idum;
     printf("Pulser_enabled is *False*");
@@ -322,7 +324,7 @@ rocPrestart()
 
 
   DALMAGO;
-  tiStatus(0);
+  tiStatus(1);
   sdStatus();
 #ifdef ENABLE_FADC
   faGStatus(0);
@@ -415,7 +417,7 @@ rocEnd()
   /* FADC Event status - Is all data read out */
   faGStatus(0);
 #endif /* ENABLE_FADC */
-  tiStatus(0);
+  tiStatus(1);
   sdStatus();
   DALMASTOP;
 
@@ -425,7 +427,7 @@ rocEnd()
     printf("Cleared pulser boxes\n");
 #endif
   /* Turn off all output ports */
-    /*  tiSetOutputPort(0,0,0,0);   */
+    /*BQ  tiSetOutputPort(0,0,0,0);   */
 
 #ifdef FADC_SCALERS
   /* Resume stand alone scaler server */
@@ -458,10 +460,26 @@ rocTrigger(int arg)
   dCnt = tiReadTriggerBlock(dma_dabufp);
 
  int TRIG_word=*(dma_dabufp+2);
- /* printf("TRIG_word %8X %8x %2X\n",TRIG_word,TRIG_word&0X7000000,(TRIG_word&0X7000000)>>24);*/
- pulser_TRIG=(TRIG_word&0X2000000)>>25;
+ /* printf("TRIG_word %8X %8x %2X\n",TRIG_word,TRIG_word&0XFF000000,(TRIG_word&0XFF000000)>>24);*/
+ /*For TS triggers, first Hex digit is 2 (or at least has 2 set?) for front
+panel triggers and 2nd Hex digit is number of input
+1  Shower
+2  Hcal Sum
+3  Coincidence
+4  HRS
+5  Grinch LED
+6  HCal LED pulser
+7  HCal cosmic paddle     */
+ int TRIG_type=(TRIG_word&0x0F000000)>>24;
+ pulser_TRIG=(TRIG_type==6);
+ cosmic_TRIG=(TRIG_type==7);
+ hcal_sum_TRIG=(TRIG_type==2);
+ /* printf("TRIG_type: %X  pulser: %i   cosmic: %i   sum:  %i\n",TRIG_type,pulser_TRIG,cosmic_TRIG,hcal_sum_TRIG);*/
+
+ /*Next 3 lines for TI in Roc 16 crate
+ pulser_TRIG=(TRIG_word0X2000000)>>25;
  cosmic_TRIG=(TRIG_word&0X1000000)>>24;
- hcal_sum_TRIG=(TRIG_word&0X4000000)>>26;
+ hcal_sum_TRIG=(TRIG_word&0X4000000)>>26;*/
 
  /* if(pulser_TRIG){printf("pulser\n");}
  if(cosmic_TRIG){printf("cosmic\n");}
@@ -596,7 +614,7 @@ rocTrigger(int arg)
       hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);   /* into both boards of one box */
       printf("Re-enabling pulser\n");
-       hcalClkIn(-1);  /* re-enable pulser (suspended during clock-in */
+       hcalClkIn(69);  /* re-enable pulser (suspended during clock-in */
       /*      hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);
       hcalClkIn(HCAL_LED_C_STEP);
