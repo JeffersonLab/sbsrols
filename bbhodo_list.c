@@ -32,6 +32,9 @@
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
 
+/* Routines to add string buffers to banks */
+#include "/adaqfs/home/sbs-onl/rol_common/rocUtils.c"
+
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
 #define BUFFERLEVEL 5
@@ -343,6 +346,41 @@ rocPrestart()
 
   tiStatus(0);
   DALMASTOP;
+
+  /* Add configuration files to user event type 137 */
+  int maxsize = MAX_EVENT_LENGTH-128, inum = 0, nwords = 0;
+  int bufsize = 0;
+  char tdcConfigBuffer[1024];
+  bufsize = sprintf(tdcConfigBuffer,
+		    "tdc1190_config_EdgeResolution %d\n",
+		    Common1190Config.EdgeResolution);
+  bufsize += sprintf(tdcConfigBuffer+bufsize,
+		    "tdc1190_config_EdgeDetectionConfig %d\n",
+		    Common1190Config.EdgeDetectionConfig);
+  bufsize += sprintf(tdcConfigBuffer+bufsize,
+		    "tdc1190_config_WindowWidth %d\n",
+		    Common1190Config.WindowWidth);
+  bufsize += sprintf(tdcConfigBuffer+bufsize,
+		    "tdc1190_config_WindowOffset %d\n",
+		    Common1190Config.WindowOffset);
+
+  UEOPEN(137, BT_BANK, 0);
+  if(rol->usrConfig)
+    {
+      nwords = rocFile2Bank(rol->usrConfig,
+			    (uint8_t *)rol->dabufp,
+			    ROCID, inum++, maxsize);
+      if(nwords > 0)
+	rol->dabufp += nwords;
+    }
+
+  nwords = rocBuffer2Bank(tdcConfigBuffer, (uint8_t *)rol->dabufp,
+			  ROCID, inum++, strlen(tdcConfigBuffer));
+
+  if(nwords > 0)
+    rol->dabufp += nwords;
+
+  UECLOSE;
 
   printf("rocPrestart: User Prestart Executed\n");
 
