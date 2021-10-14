@@ -19,6 +19,9 @@
 /* Need this for the payloadport -> vme slot map */
 #include "jvme_loan.h"
 
+/* Routines to add string buffers to banks */
+#include "/adaqfs/home/sbs-onl/rol_common/rocUtils.c"
+
 /* Note that ROCID is a static readout list variable that gets set
    automatically in the ROL initialization at Download. */
 
@@ -43,10 +46,15 @@ int firstEvent;
 */
 unsigned int emuData[] = {0x634d7367,0x20697320,0x636f6f6c,6,0,4196352,1,1};
 
+/* Filenames obtained from the platform or other config files */
+char COMMON_MODE_FILENAME[250], PEDESTAL_FILENAME[250];
+char APV_CONFIG_FILENAME[250];
+char VTP_CONFIG_FILENAME[250];
 
 /* default config filenames, if they are not defined in COOL */
-char VTP_CONFIG_FILENAME[250];
+#define DEFAULT_APV_CONFIG "/home/sbs-onl/cfg/vtp_config_TS.cfg"
 #define DEFAULT_VTP_CONFIG "/home/sbs-onl/vtp/cfg/sbsvtp3.config"
+#define APV_TEMP_CONFIG "/tmp/vtp_out.cfg"
 
 
 /* Start of MPD specific configuration */
@@ -236,12 +244,62 @@ rocPrestart()
   rocStatus();
   vtpMpdApvConfigStatus();
 
-  unsigned int ubuf[10000];
-  unsigned int uetype = 137;
-  vtpRocFile2Event(VTP_CONFIG_FILENAME,
-		   (unsigned char *)&ubuf[0],uetype,40000);
-  /* Send a User Event - read in a File */
-  vtpRocEvioWriteUserEvent(ubuf);
+  /* Insert Config Files into User Event 137 */
+  /* Pointer gymnastics ahead. */
+
+  uint32_t *ueBuffer; /* User event buffer */
+  int maxsize = 4 * 1024 * 1024;
+
+  ueBuffer = malloc(maxsize);
+  if(ueBuffer == NULL)
+    {
+      perror("malloc");
+      return;
+    }
+
+  /* Point the data pointer to the start of the buffer */
+  uint32_t *uebufp = ueBuffer;
+  uebufp += 2; /* Bump by 2 words for the Event Length and Header */
+
+  unsigned int uetype = 137; /*  1/alpha  How has this not been taken yet? */
+  int inum = 0, nwords = 0;
+
+  /* Fill the buffer with a string bank of the file contents */
+  nwords = rocFile2Bank(VTP_CONFIG_FILENAME,
+			(uint8_t *)uebufp,
+			ROCID, inum++, maxsize);
+  if(nwords > 0)
+    uebufp += nwords;
+
+  nwords = rocFile2Bank(APV_TEMP_CONFIG,
+			(uint8_t *)uebufp,
+			ROCID, inum++, maxsize - nwords);
+  if(nwords > 0)
+    uebufp += nwords;
+
+  nwords = rocFile2Bank(COMMON_MODE_FILENAME,
+			(uint8_t *)uebufp,
+			ROCID, inum++, maxsize - nwords);
+  if(nwords > 0)
+    uebufp += nwords;
+
+  nwords = rocFile2Bank(PEDESTAL_FILENAME,
+			(uint8_t *)uebufp,
+			ROCID, inum++, maxsize - nwords);
+  if(nwords > 0)
+    uebufp += nwords;
+
+  /* Where we are - where we were */
+  uint32_t buffersize = (uint32_t)((char *) uebufp - (char *) ueBuffer);
+
+  /* Evio Event Header */
+  ueBuffer[0] = (buffersize >> 2) - 1;         /* Event Length */
+  ueBuffer[1] = (uetype << 16) | (0x10 << 8) ; /* User Event of Banks */
+
+  /* Send it to the EMU */
+  vtpRocEvioWriteUserEvent(ueBuffer);
+
+  free(ueBuffer);
 
   printf(" Done with User Prestart\n");
 

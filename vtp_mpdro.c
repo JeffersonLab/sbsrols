@@ -15,10 +15,6 @@
 
 // These are now defined in the config file
 //   e.g. ~/vtp/cfg/sbsvtp3.config
-char COMMON_MODE_FILENAME[250], PEDESTAL_FILENAME[250];
-char APV_CONFIG_FILENAME[250];
-
-#define DEFAULT_APV_CONFIG "/home/sbs-onl/cfg/vtp_config_TS.cfg"
 
 
 void
@@ -101,6 +97,8 @@ vtp_mpd_setup()
   extern int vtpDownloadAll();
 
   vtpInitGlobals();
+
+  vtpMpdConfigWrite(APV_TEMP_CONFIG);
 
   if(vtpReadConfigFile(rol->usrString) == ERROR)
     {
