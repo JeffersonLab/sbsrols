@@ -58,6 +58,9 @@
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
 
+/* Routines to add string buffers to banks */
+#include "/adaqfs/home/sbs-onl/rol_common/rocUtils.c"
+
 #ifdef ENABLE_FADC
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
@@ -408,6 +411,30 @@ rocPrestart()
   tiStatus(1);
   sdStatus();
   DALMASTOP;
+
+
+  /* Add configuration files to user event type 137 */
+  int maxsize = MAX_EVENT_LENGTH-128, inum = 0, nwords = 0;
+
+  UEOPEN(137, BT_BANK, 0);
+  if(rol->usrConfig)
+    {
+      nwords = rocFile2Bank(rol->usrConfig,
+			    (uint8_t *)rol->dabufp,
+			    ROCID, inum++, maxsize);
+      if(nwords > 0)
+	rol->dabufp += nwords;
+    }
+
+  nwords = rocFile2Bank("/home/sbs-onl/cfg/f1tdc/hcal_f1tdc_3125.cfg",
+			(uint8_t *)rol->dabufp,
+			ROCID, inum++, maxsize);
+
+  if(nwords > 0)
+    rol->dabufp += nwords;
+
+  UECLOSE;
+
 
   printf("rocPrestart: User Prestart Executed\n");
 
