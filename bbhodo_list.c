@@ -34,7 +34,7 @@
 
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
-#define BUFFERLEVEL 1
+#define BUFFERLEVEL 5
 
 #define USE_FADC 1
 #ifdef USE_FADC
@@ -119,7 +119,7 @@ rocDownload()
 
   if(rocTriggerSource == 0)
     {
-      tiSetTriggerSource(TI_TRIGGER_FPTRG); /* FP TRG enabled */
+      tiSetTriggerSource(TI_TRIGGER_TSINPUTS);
     }
   else
     {

@@ -19,8 +19,8 @@ endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
 VMEROL	= bbhodo_list.so bbhodo_slave_list.so \
-	ti_master_list.so ti_slave_list.so \
-	bbhodo_scalers_list.so bbhodo_scalers_slave_list.so
+	ti_master_list.so ti_slave_list.so
+
 # Add shared library dependencies here.  (jvme, ti, are already included)
 ROLLIBS			= -lc1190 -lc792 -lsd -lts -lfadc -ldalmaRol
 
