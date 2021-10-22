@@ -79,18 +79,8 @@ vtp_mpd_setup()
   vtpMpdFiberReset();
   vtpMpdFiberLinkReset(0xffffffff);
 
-
+  /* ... the VTP holds all the MPD event build stuff in reset... */
   vtpMpdDisable(0xffffffff);
-
-  vtpFiberMaskToInit = mpdGetVTPFiberMask();
-  printf("VTP fiber mask: 0x%08x\n", vtpFiberMaskToInit);
-
-  while(vtpFiberMaskToInit != 0){
-    if((vtpFiberMaskToInit & 0x1) == 1)
-      vtpMpdEnable( 0x1 << vtpFiberBit);
-    vtpFiberMaskToInit = vtpFiberMaskToInit >> 1;
-    ++vtpFiberBit;
-  }
 
   /* Read Config file and Intialize VTP */
   extern int vtpReadConfigFile(char *filename);
@@ -264,9 +254,7 @@ vtp_mpd_setup()
     fclose(fcommon);
   }
 
-  vtpRocMigReset(1);
-  vtpRocMigReset(0);
-  //  vtpPrintMigStatus(0);
+  /* setups up the MPD (so they clear their buffers) ... */
 
   /*****************
    *   MPD SETUP
@@ -547,7 +535,29 @@ vtp_mpd_setup()
   DALMASTOP;
 
   if ((errSlotMask != 0) || (error_status != OK))
-    daLogMsg("ERROR", "MPD initialization errors");
+    {
+      daLogMsg("ERROR", "MPD initialization errors");
+    }
+
+
+  /* ...then VTP can enable the MPD event building,  */
+  vtpFiberMaskToInit = mpdGetVTPFiberMask();
+  printf("VTP fiber mask: 0x%08x\n", vtpFiberMaskToInit);
+
+  while(vtpFiberMaskToInit != 0){
+    if((vtpFiberMaskToInit & 0x1) == 1)
+      vtpMpdEnable( 0x1 << vtpFiberBit);
+    vtpFiberMaskToInit = vtpFiberMaskToInit >> 1;
+    ++vtpFiberBit;
+  }
+
+  /* and clear out it's buffers */
+  vtpRocMigReset(1);
+  vtpRocMigReset(0);
+
+  vtpV7SetResetSoft(1);
+  vtpV7SetResetSoft(0);
+
 }
 
 void
