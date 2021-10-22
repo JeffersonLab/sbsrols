@@ -156,25 +156,32 @@ rocPrestart()
   /* Initialize the TI Interface */
   vtpTiLinkInit();
 
+  /* Write in the Destination IP and port obtained from platform */
+  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
+  emuport = rol->rlinkP->port;
+  daLogMsg("INFO"," EMU IP = 0x%08x  Port= %d\n",emuip, emuport);
 
    /* Readback the VTP 10Gig network registers and connect */
   unsigned char ipaddr[4];
   unsigned char subnet[4];
   unsigned char gateway[4];
   unsigned char mac[6];
-  unsigned char destip[4];
+  unsigned char destipaddr[4];
   unsigned short destipport;
 
   /*Read it back to to make sure */
-  vtpRocGetTcpCfg(ipaddr, subnet, gateway, mac, destip, &destipport);
+  vtpRocGetTcpCfg(ipaddr, subnet, gateway, mac, destipaddr, &destipport);
+
+  /* Set the emu ip and port */
+  vtpRocSetTcpCfg(ipaddr, subnet, gateway, mac, emuip, emuport);
 
   printf(" Readback of TCP CLient Registers:\n");
   printf("   ipaddr=%d.%d.%d.%d\n",ipaddr[0],ipaddr[1],ipaddr[2],ipaddr[3]);
   printf("   subnet=%d.%d.%d.%d\n",subnet[0],subnet[1],subnet[2],subnet[3]);
   printf("   gateway=%d.%d.%d.%d\n",gateway[0],gateway[1],gateway[2],gateway[3]);
   printf("   mac=%02x:%02x:%02x:%02x:%02x:%02x\n",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
-  printf("   destip=%d.%d.%d.%d\n",destip[0],destip[1],destip[2],destip[3]);
-  printf("   destipport=%d\n",destipport);
+  printf("   emuip=0x%08x\n",emuip);
+  printf("   emuport=%d\n",emuport);
 
 
   /* Make the Connection . Pass Data needed to complete connection with the EMU */

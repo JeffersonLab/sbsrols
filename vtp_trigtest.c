@@ -161,7 +161,7 @@ rocPrestart()
     unsigned short destipport;
 
     // VTP IP Address
-    ipaddr[0]=129; ipaddr[1]=57; ipaddr[2]=192; ipaddr[3]=133;
+    ipaddr[0]=129; ipaddr[1]=57; ipaddr[2]=192; ipaddr[3]=110;
     // Subnet mask
     subnet[0]=255; subnet[1]=255; subnet[2]=255; subnet[3]=0;
     // Gateway
