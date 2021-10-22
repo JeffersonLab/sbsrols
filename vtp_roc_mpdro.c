@@ -20,6 +20,7 @@
 #include "jvme_loan.h"
 
 /* Routines to add string buffers to banks */
+#define BYTESWAPIT
 #include "/adaqfs/home/sbs-onl/rol_common/rocUtils.c"
 
 /* Note that ROCID is a static readout list variable that gets set
@@ -137,7 +138,7 @@ rocDownload()
 void
 rocPrestart()
 {
-
+  extern void vtpMpdApvConfigStatus();
 
   unsigned int emuip, emuport;
 
@@ -242,15 +243,17 @@ rocPrestart()
   vtpRocEvioWriteControl(0xffd1,rol->runNumber,rol->runType);
 
   rocStatus();
+
   vtpMpdApvConfigStatus();
 
   /* Insert Config Files into User Event 137 */
   /* Pointer gymnastics ahead. */
-
+#define UEVENT137
+#ifdef UEVENT137
   uint32_t *ueBuffer; /* User event buffer */
-  int maxsize = 4 * 1024 * 1024;
+  int maxsize = 3 * 1024 * 1024;
 
-  ueBuffer = malloc(maxsize);
+  ueBuffer = malloc(maxsize + 1024*1024);
   if(ueBuffer == NULL)
     {
       perror("malloc");
@@ -261,7 +264,7 @@ rocPrestart()
   uint32_t *uebufp = ueBuffer;
   uebufp += 2; /* Bump by 2 words for the Event Length and Header */
 
-  unsigned int uetype = 137; /*  1/alpha  How has this not been taken yet? */
+  unsigned int uetype = 138; /*  1/alpha  How has this not been taken yet? */
   int inum = 0, nwords = 0;
 
   /* Fill the buffer with a string bank of the file contents */
@@ -273,19 +276,18 @@ rocPrestart()
 
   nwords = rocFile2Bank(APV_TEMP_CONFIG,
 			(uint8_t *)uebufp,
-			ROCID, inum++, maxsize - nwords);
+			ROCID, inum++, maxsize);
   if(nwords > 0)
     uebufp += nwords;
-
   nwords = rocFile2Bank(COMMON_MODE_FILENAME,
 			(uint8_t *)uebufp,
-			ROCID, inum++, maxsize - nwords);
+			ROCID, inum++, maxsize);
   if(nwords > 0)
     uebufp += nwords;
 
   nwords = rocFile2Bank(PEDESTAL_FILENAME,
 			(uint8_t *)uebufp,
-			ROCID, inum++, maxsize - nwords);
+			ROCID, inum++, maxsize);
   if(nwords > 0)
     uebufp += nwords;
 
@@ -300,6 +302,7 @@ rocPrestart()
   vtpRocEvioWriteUserEvent(ueBuffer);
 
   free(ueBuffer);
+#endif
 
   printf(" Done with User Prestart\n");
 
@@ -362,7 +365,6 @@ rocGo()
 void
 rocStatus()
 {
-  extern void vtpMpdApvConfigStatus();
   extern int mpdOutputBufferCheck();
   /* Put out some Status' for debug */
   DALMAGO;
@@ -370,6 +372,7 @@ rocStatus()
   vtpMpdPrintStatus(mpdGetVTPFiberMask(),0);
 
   vtpRocStatus(0);
+  mpdOutputBufferCheck();
   DALMASTOP;
 }
 
@@ -404,7 +407,6 @@ rocEnd()
 
 
   rocStatus();
-  mpdOutputBufferCheck();
 
   /* Disconnect the socket */
   vtpRocTcpConnect(0,0,0);

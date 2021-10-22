@@ -573,27 +573,10 @@ vtpMpdDownload()
 void
 vtpMpdPrestart()
 {
+  int UseSdram, FastReadout;
+
   // Setup in Prestart since TI clock glitches at end of Download()
   vtp_mpd_setup();
-
-
-}
-
-/****************************************
- *  PAUSE
- ****************************************/
-void
-vtpMpdPause()
-{
-}
-
-/****************************************
- *  GO
- ****************************************/
-void
-vtpMpdGo()
-{
-  int UseSdram, FastReadout;
 
   /*Enable MPD*/
   UseSdram = mpdGetUseSdram(mpdSlot(0)); // assume sdram and fastreadout are the same for all MPDs
@@ -614,6 +597,25 @@ vtpMpdGo()
 
     mpdTRIG_Enable(i);
   }
+
+  mpdTRIG_GSetFrontInput(0); // SyncReset input to FP
+}
+
+/****************************************
+ *  PAUSE
+ ****************************************/
+void
+vtpMpdPause()
+{
+}
+
+/****************************************
+ *  GO
+ ****************************************/
+void
+vtpMpdGo()
+{
+  mpdTRIG_GSetFrontInput(1); // Trigger input to FP
 
   DALMAGO;
   printf("MPD PEDESTAL FILENAME: %s\n", PEDESTAL_FILENAME);
