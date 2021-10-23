@@ -82,178 +82,6 @@ vtp_mpd_setup()
   /* ... the VTP holds all the MPD event build stuff in reset... */
   vtpMpdDisable(0xffffffff);
 
-  /* Read Config file and Intialize VTP */
-  extern int vtpReadConfigFile(char *filename);
-  extern int vtpDownloadAll();
-
-  vtpInitGlobals();
-
-  vtpMpdConfigWrite(APV_TEMP_CONFIG);
-
-  if(vtpReadConfigFile(rol->usrString) == ERROR)
-    {
-      printf("%s: Error using rol->usrString %s.\n",
-	     __func__, rol->usrString);
-
-      printf("  trying %s\n",
-	     DEFAULT_VTP_CONFIG);
-
-      if(vtpConfig(DEFAULT_VTP_CONFIG) == ERROR)
-	{
-	  daLogMsg("ERROR","Error loading VTP configuration file");
-	  return;
-	}
-      else
-	{
-	  strncpy(VTP_CONFIG_FILENAME, DEFAULT_VTP_CONFIG, 250);
-	}
-    }
-  else
-    {
-      strncpy(VTP_CONFIG_FILENAME, rol->usrString, 250);
-    }
-  vtpDownloadAll();
-
-  vtpMpdGetCommonModeFilename(COMMON_MODE_FILENAME);
-  vtpMpdGetPedestalFilename(PEDESTAL_FILENAME);
-
-  float pedestal_factor = 1;
-  vtpMpdGetPedestalFactor(&pedestal_factor);
-
-  //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
-  int apvId, cModeMin, cModeMax, cModeRocId, cModeSlot;
-  int fiberID = -1, last_mpdSlot = -1;
-  FILE *fcommon   = fopen(COMMON_MODE_FILENAME,"r");
-
-  if(fcommon == NULL)
-    {
-      perror("fopen");
-      daLogMsg("ERROR","Failed to open GEM CommonModeRange file");
-    }
-
-  //valid pedestal file => will load APV offset file and subtract from APV samples
-  FILE *fpedestal = fopen(PEDESTAL_FILENAME,"r");//all GEMs
-
-  if(fpedestal == NULL)
-    {
-      perror("fopen");
-      daLogMsg("ERROR","Failed to open GEM Pedestal file");
-    }
-
-  // Load pedestal & threshold file settings
-  int stripNo;
-  float ped_offset, ped_rms;
-  char buf[10];
-  int i1, i2, i3, i4, n;
-  char *line_ptr = NULL;
-  size_t line_len;
-  fiberID = -1, last_mpdSlot = -1;
-
-  // We will force a pedestal mode run, if any of these conditions are met
-  // - enable_cm = 0
-  // - PEDESTAL_FILENAME undefined or missing
-  int build_all_samples, build_debug_headers,
-    enable_cm, noprocessing_prescale,
-    allow_peak_any_time, min_avg_samples;
-
-  vtpMpdEbGetFlags(&build_all_samples, &build_debug_headers,
-		   &enable_cm, &noprocessing_prescale,
-		   &allow_peak_any_time, &min_avg_samples);
-
-  if((fpedestal==NULL) || (enable_cm == 0))
-    {
-      daLogMsg("INFO","Pedestal Run Engaged");
-
-      if (fpedestal==NULL)
-	daLogMsg("INFO","Undefined or Missing Pedestal File\n");
-
-      if (enable_cm == 0)
-	daLogMsg("INFO","enable_cm = 0\n");
-
-      /* Reset the enable_cm, and build_all_samples
-	 assuming missing pedestal file means its a pedestal run */
-      enable_cm = 0;
-      build_all_samples = 1;
-
-      vtpMpdEbSetFlags(build_all_samples, build_debug_headers,
-		       enable_cm, noprocessing_prescale,
-		       allow_peak_any_time, min_avg_samples);
-
-      for(fiberID=0; fiberID<16; fiberID++)
-	{
-	  for(apvId=0; apvId<15; apvId++)
-	    {
-	      for(stripNo=0; stripNo<128; stripNo++)
-		{
-		  vtpMpdSetApvOffset(fiberID, apvId, stripNo, 0);
-		  vtpMpdSetApvThreshold(fiberID, apvId, stripNo, 0);
-		}
-	    }
-	}
-    }
-  else
-    {
-      printf("trying to read pedestal \n");
-
-      while(!feof(fpedestal))
-	{
-	  getline(&line_ptr, &line_len, fpedestal);
-
-	  n = sscanf(line_ptr, "%10s %d %d %d %d", buf, &i1, &i2, &i3, &i4);
-	  if( (n == 5) && !strcmp("APV", buf))
-	    {
-	      cModeRocId = i1;
-	      fiberID = i3;
-	      apvId = i4;
-	      continue;
-	    }
-
-
-	  n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
-
-	  // if settings are for us
-	  if(cModeRocId != ROCID)
-	    {
-	      printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
-	      continue;
-	    }
-
-	  if(n == 3)
-	    {
-	      //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
-	      vtpMpdSetApvOffset(fiberID, apvId, stripNo, (int)ped_offset);
-	      vtpMpdSetApvThreshold(fiberID, apvId, stripNo, (int)(pedestal_factor*ped_rms));
-	    }
-	}
-      fclose(fpedestal);
-    }
-
-  // Load common-mode file settings
-  if(fcommon==NULL){
-    printf("no commonMode file\n");
-  }else{
-    printf("trying to read commonMode\n");
-    while(fscanf(fcommon, "%d %d %d %d %d %d", &cModeRocId, &cModeSlot, &fiberID, &apvId, &cModeMin, &cModeMax)==6)
-      {
-	/* printf("fiberID %d %d %d %d %d %d \n", cModeRocId, cModeSlot, fiberID, apvId, cModeMin, cModeMax); */
-
-	//	  cModeMin = 200;
-	//	  cModeMax = 800;
-	//	  cModeMin = 0;
-	//	  cModeMax = 4095;
-
-	// if settings are for us
-	if(cModeRocId != ROCID)
-	  {
-	    printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
-	    continue;
-	  }
-
-	vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
-      }
-    fclose(fcommon);
-  }
-
   /* setups up the MPD (so they clear their buffers) ... */
 
   /*****************
@@ -557,6 +385,178 @@ vtp_mpd_setup()
 
   vtpV7SetResetSoft(1);
   vtpV7SetResetSoft(0);
+
+  /* Read Config file and Intialize VTP */
+  extern int vtpReadConfigFile(char *filename);
+  extern int vtpDownloadAll();
+
+  vtpInitGlobals();
+
+  vtpMpdConfigWrite(APV_TEMP_CONFIG);
+
+  if(vtpReadConfigFile(rol->usrString) == ERROR)
+    {
+      printf("%s: Error using rol->usrString %s.\n",
+	     __func__, rol->usrString);
+
+      printf("  trying %s\n",
+	     DEFAULT_VTP_CONFIG);
+
+      if(vtpConfig(DEFAULT_VTP_CONFIG) == ERROR)
+	{
+	  daLogMsg("ERROR","Error loading VTP configuration file");
+	  return;
+	}
+      else
+	{
+	  strncpy(VTP_CONFIG_FILENAME, DEFAULT_VTP_CONFIG, 250);
+	}
+    }
+  else
+    {
+      strncpy(VTP_CONFIG_FILENAME, rol->usrString, 250);
+    }
+  vtpDownloadAll();
+
+  vtpMpdGetCommonModeFilename(COMMON_MODE_FILENAME);
+  vtpMpdGetPedestalFilename(PEDESTAL_FILENAME);
+
+  float pedestal_factor = 1;
+  vtpMpdGetPedestalFactor(&pedestal_factor);
+
+  //char* mpdSlot[10],apvId[10],cModeMin[10],cModeMax[10];
+  int apvId, cModeMin, cModeMax, cModeRocId, cModeSlot;
+  int fiberID = -1, last_mpdSlot = -1;
+  FILE *fcommon   = fopen(COMMON_MODE_FILENAME,"r");
+
+  if(fcommon == NULL)
+    {
+      perror("fopen");
+      daLogMsg("ERROR","Failed to open GEM CommonModeRange file");
+    }
+
+  //valid pedestal file => will load APV offset file and subtract from APV samples
+  FILE *fpedestal = fopen(PEDESTAL_FILENAME,"r");//all GEMs
+
+  if(fpedestal == NULL)
+    {
+      perror("fopen");
+      daLogMsg("ERROR","Failed to open GEM Pedestal file");
+    }
+
+  // Load pedestal & threshold file settings
+  int stripNo;
+  float ped_offset, ped_rms;
+  char buf[10];
+  int i1, i2, i3, i4, n;
+  char *line_ptr = NULL;
+  size_t line_len;
+  fiberID = -1, last_mpdSlot = -1;
+
+  // We will force a pedestal mode run, if any of these conditions are met
+  // - enable_cm = 0
+  // - PEDESTAL_FILENAME undefined or missing
+  int build_all_samples, build_debug_headers,
+    enable_cm, noprocessing_prescale,
+    allow_peak_any_time, min_avg_samples;
+
+  vtpMpdEbGetFlags(&build_all_samples, &build_debug_headers,
+		   &enable_cm, &noprocessing_prescale,
+		   &allow_peak_any_time, &min_avg_samples);
+
+  if((fpedestal==NULL) || (enable_cm == 0))
+    {
+      daLogMsg("INFO","Pedestal Run Engaged");
+
+      if (fpedestal==NULL)
+	daLogMsg("INFO","Undefined or Missing Pedestal File\n");
+
+      if (enable_cm == 0)
+	daLogMsg("INFO","enable_cm = 0\n");
+
+      /* Reset the enable_cm, and build_all_samples
+	 assuming missing pedestal file means its a pedestal run */
+      enable_cm = 0;
+      build_all_samples = 1;
+
+      vtpMpdEbSetFlags(build_all_samples, build_debug_headers,
+		       enable_cm, noprocessing_prescale,
+		       allow_peak_any_time, min_avg_samples);
+
+      for(fiberID=0; fiberID<16; fiberID++)
+	{
+	  for(apvId=0; apvId<15; apvId++)
+	    {
+	      for(stripNo=0; stripNo<128; stripNo++)
+		{
+		  vtpMpdSetApvOffset(fiberID, apvId, stripNo, 0);
+		  vtpMpdSetApvThreshold(fiberID, apvId, stripNo, 0);
+		}
+	    }
+	}
+    }
+  else
+    {
+      printf("trying to read pedestal \n");
+
+      while(!feof(fpedestal))
+	{
+	  getline(&line_ptr, &line_len, fpedestal);
+
+	  n = sscanf(line_ptr, "%10s %d %d %d %d", buf, &i1, &i2, &i3, &i4);
+	  if( (n == 5) && !strcmp("APV", buf))
+	    {
+	      cModeRocId = i1;
+	      fiberID = i3;
+	      apvId = i4;
+	      continue;
+	    }
+
+
+	  n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
+
+	  // if settings are for us
+	  if(cModeRocId != ROCID)
+	    {
+	      printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+	      continue;
+	    }
+
+	  if(n == 3)
+	    {
+	      //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
+	      vtpMpdSetApvOffset(fiberID, apvId, stripNo, (int)ped_offset);
+	      vtpMpdSetApvThreshold(fiberID, apvId, stripNo, (int)(pedestal_factor*ped_rms));
+	    }
+	}
+      fclose(fpedestal);
+    }
+
+  // Load common-mode file settings
+  if(fcommon==NULL){
+    printf("no commonMode file\n");
+  }else{
+    printf("trying to read commonMode\n");
+    while(fscanf(fcommon, "%d %d %d %d %d %d", &cModeRocId, &cModeSlot, &fiberID, &apvId, &cModeMin, &cModeMax)==6)
+      {
+	/* printf("fiberID %d %d %d %d %d %d \n", cModeRocId, cModeSlot, fiberID, apvId, cModeMin, cModeMax); */
+
+	//	  cModeMin = 200;
+	//	  cModeMax = 800;
+	//	  cModeMin = 0;
+	//	  cModeMax = 4095;
+
+	// if settings are for us
+	if(cModeRocId != ROCID)
+	  {
+	    printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+	    continue;
+	  }
+
+	vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
+      }
+    fclose(fcommon);
+  }
 
 }
 
