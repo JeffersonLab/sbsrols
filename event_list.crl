@@ -1,6 +1,6 @@
-# 
+#
 #  EVENT readout list
-#    Example of a Secondary readout list responsible for 
+#    Example of a Secondary readout list responsible for
 #    getting data from the primary readout list and then
 #    passing it to the Output queue.
 #
@@ -11,12 +11,17 @@ maximum 10240,100
 polling
 event readout
 
+%%
+extern void daLogMsg(char *severity, char *fmt,...);
+%%
+
+
 begin download
 
   log inform "User Download 2 Executed"
 
 end download
-    
+
 begin prestart
 
   variable jj, adc_id
@@ -46,9 +51,9 @@ begin pause
 end pause
 
 begin go
-  
+
   log inform "Entering User Go 2"
-  
+
 end go
 
 begin trigger davetrig
@@ -84,5 +89,3 @@ begin __reset
 printf("In the event_list __reset() function\n");
 %%
 end __reset
-
-

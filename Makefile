@@ -18,9 +18,9 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= event_list.so
+VMEROL			= event_list.so ti_master_list.so ti_slave_list.so ti_slave5_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			=
+ROLLIBS			= -ldalmaRol -lsd -lts
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -75,26 +75,25 @@ all:  $(VMEROL) $(SOBJS)
 	@echo " CCRL   $@"
 	${Q}${CCRL} $<
 
-#event_list.so: event_list.c
-#	@echo " CC     $@"
-#	${Q}${CC} ${CODA_CFLAGS} -o $@ $<
-
-test_list_v3.so: test_list_v3.c
-	@echo " CC     $@"
-	${Q}${CC} ${CODA_CFLAGS} -o $@ $<
-
 %.so: %.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
-mpd_slave_list.so: mpd_list.c
+%slave_list.so: %list.c
 	@echo " CC     $@"
-	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
-mpd_list.so: mpd_list.c
+%master_list.so: %list.c
 	@echo " CC     $@"
-	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER -DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+%slave5_list.so: %list.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE5 \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
 clean distclean:
 	${Q}rm -f  $(VMEROL) $(SOBJS) $(CFILES) *~ $(DEPS) $(DEPS) *.d.*
@@ -109,4 +108,4 @@ clean distclean:
 
 -include $(DEPS)
 
-.PHONY: all
+.PHONY: all ti_list.so
