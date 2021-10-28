@@ -1,7 +1,39 @@
-/*
+/**
+ *  Copyright (c) 2021        Southeastern Universities Research Association, *
+ *                            Thomas Jefferson National Accelerator Facility  *
+ *                                                                            *
+ *    This software was developed under a United States Government license    *
+ *    described in the NOTICE file included as part of this distribution.     *
+ *                                                                            *
+ *    Authors: Bryan Moffit                                                   *
+ *             moffit@jlab.org                   Jefferson Lab, MS-12B3       *
+ *             Phone: (757) 269-5660             12000 Jefferson Ave.         *
+ *             Fax:   (757) 269-5800             Newport News, VA 23606       *
+ *
+ * Description:
  *
  *  A few helpful routines to help do stuff in the ROC readout list
  *
+ *   Important:
+ *        - MAX_EVENT_LENGTH > size of the User Event
+ *        - Can NOT be used in rocEnd().
+ */
+
+/*  Example Usage:
+
+    UEOPEN(137, BT_BANK, 0);
+    nwords = rocBuffer2Bank(textBuffer,
+                            (uint8_t *)rol->dabufp,
+			    ROCID, inum++, strlen(textBuffer));
+    if(nwords > 0)
+      rol->dabufp += nwords;
+
+    nwords = rocFile2Bank("/daqfs/daq_setups/vtp-mpdro/cfg/vtp_config.cfg",
+                           (uint8_t *)rol->dabufp,
+			   ROCID, inum++, maxsize);
+    if(nwords > 0)
+      rol->dabufp += nwords;
+    UECLOSE;
  */
 
 #include <byteswap.h>
@@ -80,7 +112,6 @@ rocFile2Bank(const char *fname, uint8_t *buf,
 
   /*Swap the bytes going to the Async Event 32 bit Fifo */
 #ifdef BYTESWAPIT
-  if(0)
     {
       uint8_t aa, bb;
       for(ii = 8; ii <= (bank_header[0] << 2); ii += 4)
@@ -93,13 +124,7 @@ rocFile2Bank(const char *fname, uint8_t *buf,
 	  buf[ii + 3] = aa;
 	}
     }
-  else
-    {
-      for(ii = 0; ii <= (bank_header[0]); ii++)
-	u32p[ii] = bswap_32(u32p[ii]);
-    }
 #endif /* BYTESWAPIT */
-
 
   return (bank_header[0] + 1);
 
@@ -150,7 +175,6 @@ rocBuffer2Bank(const char *inbuf, uint8_t *buf,
 
   /*Swap the bytes going to the Async Event 32 bit Fifo */
 #ifdef BYTESWAPIT
-  if(0)
     {
       uint8_t aa, bb;
       for(ii = 8; ii <= (bank_header[0] << 2); ii += 4)
@@ -163,13 +187,7 @@ rocBuffer2Bank(const char *inbuf, uint8_t *buf,
 	  buf[ii + 3] = aa;
 	}
     }
-  else
-    {
-      for(ii = 0; ii <= (bank_header[0]); ii++)
-	u32p[ii] = bswap_32(u32p[ii]);
-    }
 #endif /* BYTESWAPIT */
-
 
   return (bank_header[0] + 1);
 
