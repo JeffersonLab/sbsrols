@@ -79,18 +79,11 @@ rocDownload()
 #endif /* RELOAD_FIRMWARE */
 
 
-  /* ltm4676_print_status(); */
-
   if(vtpInit(VTP_INIT_CLK_VXS_250))
-  {
-    printf("vtpInit() **FAILED**. User should not continue.\n");
-    return;
-  }
-
-
-
-
-  firstEvent = 1;
+    {
+      printf("vtpInit() **FAILED**. User should not continue.\n");
+      return;
+    }
 
 
  /* print some connection info from the ROC */
