@@ -34,6 +34,31 @@ extern volatile struct mpd_struct *MPDp[(MPD_MAX_BOARDS+1)]; /* pointers to MPD 
 
 // End of MPD definition
 
+/*
+  Disable troubled APV if an error occurs during configuration
+*/
+int32_t apvRejectMode = 1; /* 1: Reject APV that error during config,
+			      0: Keep them in (will usually cause trigger lock-up)
+			   */
+
+int32_t
+vtpSetApvRejectMode(int32_t enable)
+{
+  apvRejectMode = (enable) ? 1 : 0;
+
+  return apvRejectMode;
+}
+
+int32_t
+vtpGetApvRejectMode(int32_t pflag)
+{
+  if(pflag)
+    {
+      printf("%s: apvRejectMode = %d\n",
+	     __func__, apvRejectMode);
+    }
+  return apvRejectMode;
+}
 
 char *apvbuffer;
 char *bufp;
@@ -365,6 +390,37 @@ vtp_mpd_setup()
   if ((errSlotMask != 0) || (error_status != OK))
     {
       daLogMsg("ERROR", "MPD initialization errors");
+    }
+
+  if(apvRejectMode == 1)
+    {
+      /* For each MPD, disable those APV that returned error during
+	 configuration */
+
+      for(id = 0; id < 32; id++)
+	{
+	  /* Skip ones we're not using */
+	  if( ((1 << id) & mpdGetVTPFiberMask()) == 0)
+	    continue;
+
+	  /* Skip the MPD with unbroken APV */
+	  if(apvConfigErrorMask[id] == 0)
+	    continue;
+
+	  /* Get the current APV Enabled mask */
+	  uint32_t current_mask = ((uint32_t) mpdGetApvEnableMask(id)) & 0xFFFF;
+
+	  /* Remove the broken bits */
+	  uint32_t updated_mask = current_mask & ~apvConfigErrorMask[id];
+
+	  /* Clear the apv enabled mask */
+	  mpdResetApvEnableMask(id);
+
+	  /* Write the updated mask */
+	  mpdSetApvEnableMask(id, updated_mask);
+
+	}
+
     }
 
 
