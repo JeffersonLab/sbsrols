@@ -397,27 +397,88 @@ vtp_mpd_setup()
       /* For each MPD, disable those APV that returned error during
 	 configuration */
 
+      printf("Reject Mode enabled\n");
+      FILE *rejectFile = NULL;
+
       for(id = 0; id < 32; id++)
 	{
-	  /* Skip ones we're not using */
-	  if( ((1 << id) & mpdGetVTPFiberMask()) == 0)
-	    continue;
-
-	  /* Skip the MPD with unbroken APV */
+	  /* Skip  the MPD with unbroken APV */
 	  if(apvConfigErrorMask[id] == 0)
 	    continue;
 
-	  /* Get the current APV Enabled mask */
+	  /* Have not opened the reject File yet */
+	  if(rejectFile == NULL)
+	    {
+	      /* Construct the filename from the runnumber and roc number */
+	      sprintf(APV_REJECT_FILENAME,
+		      APV_REJECT_FILENAME_PROTO,
+		      rol_runNumber, ROCID);
+	      rejectFile = fopen(APV_REJECT_FILENAME,"w+");
+	      if(rejectFile == NULL)
+		{
+		  perror("fopen");
+		  rejectFile = stdout;
+		  printf("Output STANDARD OUT\n");
+		}
+	      else
+		printf("Output rejectFile: %s\n", APV_REJECT_FILENAME);
+
+	      fprintf(rejectFile, "Runnumber %d\n", rol_runNumber);
+	      fprintf(rejectFile, "ROCID %2d\n", ROCID);
+	      fprintf(rejectFile, "DISABLED APVs (ADC 15 ... 0)\n");
+	    }
+
+	  /*Get the current APV Enabled mask */
 	  uint32_t current_mask = ((uint32_t) mpdGetApvEnableMask(id)) & 0xFFFF;
 
 	  /* Remove the broken bits */
 	  uint32_t updated_mask = current_mask & ~apvConfigErrorMask[id];
 
-	  /* Clear the apv enabled mask */
+	  fprintf(rejectFile, "  MPD %2d : ", id);
+
+	  int ibit, enabledBits = 0, disabledBits = 0;;
+	  for (ibit = 15; ibit >= 0; ibit--)
+	    {
+	      if (((ibit + 1) % 4) == 0)
+		{
+		  fprintf(rejectFile, " ");
+		}
+	      if (mpdGetApvEnableMask(id) & (1 << ibit))
+		{
+		  enabledBits++;
+		  if(apvConfigErrorMask[id] & (1 << ibit))
+		    {
+		      fprintf(rejectFile, "X");
+		      disabledBits++;
+		    }
+		  else
+		    {
+		      fprintf(rejectFile, "1");
+		    }
+		  iapv++;
+		}
+	      else
+		{
+		  fprintf(rejectFile, ".");
+		}
+	    }
+	  fprintf(rejectFile, " (Total: %2d   Disabled: %2d)\n",
+		  enabledBits, disabledBits);
+
+	  daLogMsg("ERROR",
+		   "MPD %d: %d APVs Disabled - configuration error",
+		   id, disabledBits);/* Clear the apv enabled mask */
 	  mpdResetApvEnableMask(id);
 
 	  /* Write the updated mask */
 	  mpdSetApvEnableMask(id, updated_mask);
+
+	}
+
+      /* Have not opened the reject File yet */
+      if(rejectFile != NULL)
+	{
+	  fclose(rejectFile);
 
 	}
 
