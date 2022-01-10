@@ -37,6 +37,13 @@ extern volatile struct mpd_struct *MPDp[(MPD_MAX_BOARDS+1)]; /* pointers to MPD 
 /*
   Disable troubled APV if an error occurs during configuration
 */
+
+/* Filenames obtained from the platform or other config files */
+char APV_REJECT_FILENAME[250];
+
+/* default config filenames, if they are not defined in COOL */
+#define APV_REJECT_FILENAME_PROTO "/adaqfs/scratch/sbs/ROC/errors/%d_ROC%d.err"
+
 int32_t apvRejectMode = 1; /* 1: Reject APV that error during config,
 			      0: Keep them in (will usually cause trigger lock-up)
 			   */
@@ -412,7 +419,7 @@ vtp_mpd_setup()
 	      /* Construct the filename from the runnumber and roc number */
 	      sprintf(APV_REJECT_FILENAME,
 		      APV_REJECT_FILENAME_PROTO,
-		      rol_runNumber, ROCID);
+		      rol->runNumber, ROCID);
 	      rejectFile = fopen(APV_REJECT_FILENAME,"w+");
 	      if(rejectFile == NULL)
 		{
@@ -423,7 +430,7 @@ vtp_mpd_setup()
 	      else
 		printf("Output rejectFile: %s\n", APV_REJECT_FILENAME);
 
-	      fprintf(rejectFile, "Runnumber %d\n", rol_runNumber);
+	      fprintf(rejectFile, "Runnumber %d\n", rol->runNumber);
 	      fprintf(rejectFile, "ROCID %2d\n", ROCID);
 	      fprintf(rejectFile, "DISABLED APVs (ADC 15 ... 0)\n");
 	    }
