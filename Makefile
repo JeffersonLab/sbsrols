@@ -20,7 +20,7 @@ endif
 # Plug in your primary readout lists here.. CRL are found automatically
 VMEROL			= event_list.so ti_master_list.so ti_slave_list.so ti_slave5_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -ldalmaRol -lsd -lts
+ROLLIBS			= -ldalmaRol
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include

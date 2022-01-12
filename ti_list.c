@@ -36,11 +36,11 @@
 
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x4A
+//#define FIBER_LATENCY_OFFSET 0x4A
+#define FIBER_LATENCY_OFFSET 0x5A
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
-#include "sdLib.h"
 
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
@@ -48,8 +48,6 @@
 
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
-
-//#include "usrstrutils.c"
 
 /*
   Global to configure the trigger source
@@ -137,14 +135,6 @@ rocDownload()
       tiRocEnable(2);
     }
 
-  /* Init the SD library so we can get status info */
-  stat = sdInit(0);
-  if(stat==0)
-    {
-      sdSetActiveVmeSlots(0);
-      sdStatus(0);
-    }
-
   tiStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -209,6 +199,7 @@ rocGo()
     }
 #endif
 
+#ifdef TI_MASTER
   /* Enable/Set Block Level on modules, if needed, here */
   if(rocTriggerSource != 0)
     {
@@ -233,6 +224,7 @@ rocGo()
 	  tiSoftTrig(1,0xffff,100,0);
 	}
     }
+#endif
 
   DALMAGO;
   tiStatus(0);
@@ -246,6 +238,7 @@ void
 rocEnd()
 {
 
+#ifdef TI_MASTER
   if(rocTriggerSource == 1)
     {
       /* Disable random trigger */
@@ -257,6 +250,7 @@ rocEnd()
       /* Disable Fixed Rate trigger */
       tiSoftTrig(1,0,100,0);
     }
+#endif
 
   DALMAGO;
   tiStatus(0);
