@@ -262,7 +262,10 @@ rocTD2Bank(uint32_t *buf, uint16_t banktag, uint8_t *banknum)
       rval = tdGetHWRegisters(tdSlot(itd), buf, 0x400);
 
       if(rval > 0)
-	buf += rval;
+	{
+	  buf += rval;
+	  *banknum = *banknum + 1;
+	}
     }
 
   /* Size of what's been added */
