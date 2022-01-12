@@ -33,6 +33,12 @@
 			   ROCID, inum++, maxsize);
     if(nwords > 0)
       rol->dabufp += nwords;
+
+    nwords = rocTI2Bank((uint32_t *)rol->dabufp,
+		        ROCID, inum++);
+    if(nwords > 0)
+      rol->dabufp += nwords;
+
     UECLOSE;
  */
 
@@ -190,5 +196,80 @@ rocBuffer2Bank(const char *inbuf, uint8_t *buf,
 #endif /* BYTESWAPIT */
 
   return (bank_header[0] + 1);
+
+}
+
+/*
+  Add trigger interface (TI) module, as banknum, to buf.
+  Final iterated banknum returned to same address.
+
+  Returns number of words added to buf.
+*/
+int
+rocTI2Bank(uint32_t *buf, uint16_t banktag, uint8_t banknum)
+{
+  int rval = 0;
+#ifdef TILIB_H
+  uint32_t *roc_StartOfBank, banklen = 0;
+  roc_StartOfBank = (uint32_t *)(buf);
+
+  /* Skip the first, and add the header to the second index in the buffer */
+  *(++(buf)) = (((banktag) << 16) | (BT_UI4_ty) << 8) | (banknum);
+  buf++;
+  rval = 2;
+
+  /* Insert data from the TI registers */
+  rval += tiGetHWRegisters(buf, );
+
+  /* Size of what's been added */
+  banklen = buf - roc_StartOfBank;
+
+  /* Add size of bank before the header (the original buf) */
+  roc_StartOfBank = (banklen >> 2) - 1;
+#endif
+  return rval;
+}
+
+/*
+  Add trigger distribution (TDs) modules, starting as banknum, to buf.
+  Final iterated banknum returned to same address.
+
+  Returns number of words added to buf.
+*/
+int
+rocTD2Bank(uint32_t *buf, uint16_t banktag, uint8_t *banknum)
+{
+  int rval = 0;
+#ifdef TDLIB_H
+  extern int nTD;
+  tdGetHWRegisters(int id, unsigned int *data_buffer, unsigned int maxwords);
+#endif
+  return rval;
+
+}
+
+/*
+  Add trigger supervisor (TS) module, as banknum, to buf.
+  Final iterated banknum returned to same address.
+
+  Returns number of words added to buf.
+*/
+int
+rocTS2Bank(uint32_t *buf, uint16_t banktag, uint8_t banknum)
+{
+  int rval = 0;
+#ifdef TSLIB_H
+  tsGetHWRegisters(unsigned int *data_buffer, unsigned int maxwords);
+#endif
+  return rval;
+
+}
+
+/* Smart call to add trigger modules starting at banknum,
+   final iterated banknum returned to same address
+*/
+int
+rocTrigger2Bank(uint32 *buf, uint16_t banktag, uint8_t *banknum)
+{
 
 }
