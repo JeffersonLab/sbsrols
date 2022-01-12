@@ -36,8 +36,7 @@
 
 
 /* Measured longest fiber length in system */
-//#define FIBER_LATENCY_OFFSET 0x4A
-#define FIBER_LATENCY_OFFSET 0x5A
+#define FIBER_LATENCY_OFFSET 0x4A
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
@@ -211,7 +210,6 @@ rocGo()
 #endif
 
 #ifdef TI_MASTER
-  /* Enable/Set Block Level on modules, if needed, here */
   if(rocTriggerSource != 0)
     {
       printf("************************************************************\n");
@@ -236,6 +234,10 @@ rocGo()
 	}
     }
 #endif
+
+
+  /* Enable/Set Block Level on modules, if needed, here */
+
 
   DALMAGO;
   tiStatus(0);

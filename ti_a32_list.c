@@ -42,6 +42,7 @@
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
+#include "rocUtils.c"
 
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
@@ -153,6 +154,16 @@ rocPrestart()
   tiStatus(0);
   DALMASTOP;
 
+  /* Add configuration files to user event type 137 */
+  int maxsize = MAX_EVENT_LENGTH-128, inum = 0, nwords = 0;
+
+  UEOPEN(137, BT_BANK, 0);
+  nwords = rocTrigger2Bank(rol->dabufp, ROCID, (uint8_t *)&inum);
+  if(nwords > 0)
+    rol->dabufp += nwords;
+
+  UECLOSE;
+
   printf("rocPrestart: User Prestart Executed\n");
 
 }
@@ -255,7 +266,6 @@ rocEnd()
       tiSoftTrig(1,0,100,0);
     }
 #endif
-
 
   DALMAGO;
   tiStatus(0);
