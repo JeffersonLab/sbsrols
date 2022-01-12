@@ -46,6 +46,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "BankTools.h"
 
 /* Routine to read in a file (as text) and create a String Bank
    (uchar*) in a buffer
@@ -210,22 +211,23 @@ rocTI2Bank(uint32_t *buf, uint16_t banktag, uint8_t banknum)
 {
   int rval = 0;
 #ifdef TILIB_H
-  uint32_t *roc_StartOfBank, banklen = 0;
-  roc_StartOfBank = (uint32_t *)(buf);
+  uint32_t *ti_StartOfBank, ti_banklen = 0;
+  ti_StartOfBank = (uint32_t *)(buf);
 
   /* Skip the first, and add the header to the second index in the buffer */
   *(++(buf)) = (((banktag) << 16) | (BT_UI4_ty) << 8) | (banknum);
   buf++;
-  rval = 2;
 
   /* Insert data from the TI registers */
-  rval += tiGetHWRegisters(buf, );
+  rval = tiGetHWRegisters(buf, 0x200);
+  if(rval > 0)
+    buf += rval;
 
   /* Size of what's been added */
-  banklen = buf - roc_StartOfBank;
+  rval = ti_banklen = buf - ti_StartOfBank;
 
   /* Add size of bank before the header (the original buf) */
-  roc_StartOfBank = (banklen >> 2) - 1;
+  *ti_StartOfBank = ti_banklen - 1;
 #endif
   return rval;
 }
@@ -242,7 +244,32 @@ rocTD2Bank(uint32_t *buf, uint16_t banktag, uint8_t *banknum)
   int rval = 0;
 #ifdef TDLIB_H
   extern int nTD;
-  tdGetHWRegisters(int id, unsigned int *data_buffer, unsigned int maxwords);
+  if(nTD <= 0)
+    return 0;
+
+  uint32_t *td_StartOfBank, td_banklen = 0;
+  td_StartOfBank = (uint32_t *)(buf);
+
+  /* Skip the first, and add the header to the second index in the buffer */
+  *(++(buf)) = (((banktag) << 16) | (BT_UI4_ty) << 8) | (*banknum);
+  buf++;
+
+  /* Insert data from the TI registers */
+  int itd = 0;
+  printf("nTD = %d\n", nTD);
+  for(itd = 0; itd < nTD; itd++)
+    {
+      rval = tdGetHWRegisters(tdSlot(itd), buf, 0x400);
+
+      if(rval > 0)
+	buf += rval;
+    }
+
+  /* Size of what's been added */
+  rval = td_banklen = buf - td_StartOfBank;
+
+  /* Add size of bank before the header (the original buf) */
+  *td_StartOfBank = td_banklen - 1;
 #endif
   return rval;
 
@@ -259,7 +286,23 @@ rocTS2Bank(uint32_t *buf, uint16_t banktag, uint8_t banknum)
 {
   int rval = 0;
 #ifdef TSLIB_H
-  tsGetHWRegisters(unsigned int *data_buffer, unsigned int maxwords);
+  uint32_t *ts_StartOfBank, ts_banklen = 0;
+  ts_StartOfBank = (uint32_t *)(buf);
+
+  /* Skip the first, and add the header to the second index in the buffer */
+  *(++(buf)) = (((banktag) << 16) | (BT_UI4_ty) << 8) | (banknum);
+  buf++;
+
+  /* Insert data from the TI registers */
+  rval = tsGetHWRegisters(buf, 0x200);
+  if(rval > 0)
+    buf += rval;
+
+  /* Size of what's been added */
+  rval = ts_banklen = buf - ts_StartOfBank;
+
+  /* Add size of bank before the header (the original buf) */
+  *ts_StartOfBank = ts_banklen - 1;
 #endif
   return rval;
 
@@ -269,7 +312,32 @@ rocTS2Bank(uint32_t *buf, uint16_t banktag, uint8_t banknum)
    final iterated banknum returned to same address
 */
 int
-rocTrigger2Bank(uint32 *buf, uint16_t banktag, uint8_t *banknum)
+rocTrigger2Bank(uint32_t *buf, uint16_t banktag, uint8_t *banknum)
 {
+  int rval = 0, nwords = 0;
+  uint32_t *StartOfBuf = buf;
 
+  nwords = rocTI2Bank(buf, banktag, *banknum);
+  if(nwords > 0)
+    {
+      buf += nwords;
+      *banknum = *banknum + 1;
+    }
+
+  nwords = rocTD2Bank(buf, banktag, banknum);
+  if(nwords > 0)
+    {
+      buf += nwords;
+    }
+
+  nwords = rocTS2Bank(buf, banktag, *banknum);
+  if(nwords > 0)
+    {
+      buf += nwords;
+      *banknum = *banknum + 1;
+    }
+
+  rval = buf - StartOfBuf;
+
+  return rval;
 }
