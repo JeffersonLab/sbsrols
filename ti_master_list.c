@@ -1,4 +1,4 @@
-/*************************************************************************
+/************************************************************************
  *
  *  ti_master_list.c - Library of routines for readout and buffering of
  *                     events using a JLAB Trigger Interface V3 (TI) with
@@ -8,7 +8,7 @@
  */
 
 /* Event Buffer definitions */
-#define MAX_EVENT_POOL     10
+#define MAX_EVENT_POOL     100
 #define MAX_EVENT_LENGTH   1024*64      /* Size in Bytes */
 
 /* Define TI Type (TI_MASTER or TI_SLAVE) */
@@ -19,8 +19,9 @@
 #define TI_ADDR  0
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x50
+#define FIBER_LATENCY_OFFSET 0x50 //original: 0x50
 
+#include <unistd.h>
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
 #include "sdLib.h"
@@ -28,9 +29,11 @@
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
 
+#include "usrstrutils.c"
+
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
-#define BUFFERLEVEL 5
+#define BUFFERLEVEL 1
 
 #define TI_SYNCEVENT_INTERVAL 1000
 
@@ -45,6 +48,67 @@
 int rocTriggerSource = 0;
 void rocSetTriggerSource(int source); // routine prototype
 
+/* Read the user flags/configuration file. */
+typedef struct
+{
+  int slave1;
+  int slave2;
+  int slave3;
+  int slave4;
+  int vtp;
+} TI_SLAVE_CONFIG;
+
+TI_SLAVE_CONFIG tiSlaveConfig = {0,0,0,0,0};
+
+void
+readUserFlags()
+{
+  int i;
+
+  printf("%s: Reading user flags file.",
+	 __func__);
+  init_strings();
+
+  tiSlaveConfig.slave1 = getflag("slave1");
+  if(tiSlaveConfig.slave1 == 2)
+    {
+      tiSlaveConfig.slave1 = getint("slave1");
+    }
+
+  tiSlaveConfig.slave2 = getflag("slave2");
+  if(tiSlaveConfig.slave2 == 2)
+    {
+      tiSlaveConfig.slave2 = getint("slave2");
+    }
+
+  tiSlaveConfig.slave3 = getflag("slave3");
+  if(tiSlaveConfig.slave3 == 2)
+    {
+      tiSlaveConfig.slave3 = getint("slave3");
+    }
+
+  tiSlaveConfig.slave4 = getflag("slave4");
+  if(tiSlaveConfig.slave4 == 2)
+    {
+      tiSlaveConfig.slave4 = getint("slave4");
+    }
+
+  tiSlaveConfig.vtp = getflag("vtp");
+  if(tiSlaveConfig.vtp == 2)
+    {
+      tiSlaveConfig.vtp = getint("vtp");
+    }
+
+  printf("%s:  tiSlaveConfig = { %d, %d, %d, %d, %d }\n",
+	 __func__,
+	 tiSlaveConfig.slave1,
+	 tiSlaveConfig.slave2,
+	 tiSlaveConfig.slave3,
+	 tiSlaveConfig.slave4,
+	 tiSlaveConfig.vtp);
+
+}
+
 
 /****************************************
  *  DOWNLOAD
@@ -54,6 +118,8 @@ rocDownload()
 {
   int stat;
 
+  readUserFlags();
+
   /* Setup Address and data modes for DMA transfers
    *
    *  vmeDmaConfig(addrType, dataType, sstMode);
@@ -62,7 +128,8 @@ rocDownload()
    *  dataType = 0 (D16)    1 (D32)    2 (BLK32) 3 (MBLK) 4 (2eVME) 5 (2eSST)
    *  sstMode  = 0 (SST160) 1 (SST267) 2 (SST320)
    */
-  vmeDmaConfig(2,5,1);
+  if(vmeDmaConfig(2,5,1) < 0)
+    vmeDmaConfig(2,3,0);
 
   /* Define BLock Level */
   blockLevel = BLOCKLEVEL;
@@ -116,7 +183,7 @@ rocDownload()
 
   tiSetTriggerPulse(1,0,25,0);
 
-//  tiSetSyncEventInterval(TI_SYNCEVENT_INTERVAL);
+  tiSetSyncEventInterval(TI_SYNCEVENT_INTERVAL);
 
   /*
     Increase the OT#2 width for the MPD input trigger
@@ -133,21 +200,28 @@ rocDownload()
   if(stat==0)
     {
       sdSetActiveVmeSlots(0);
+
+      // do this to reset VXSQSFP modules
+      printf("Resetting QSFP->VXS payload modules...\n");
+      sdTestSetStatBitBMask(0xFFFF);
+      usleep(250000);
+      sdTestSetStatBitBMask(0x0000);
+
       sdStatus(0);
     }
 
-  if(strcmp("slave1",rol->usrString) == 0)
+  if(tiSlaveConfig.slave1 > 0)
     {
-      printf("%s: usrString = %s: Adding Slave to port 1\n",
-	     __func__, rol->usrString);
+      printf("%s: Adding Slave to port 1\n",
+	     __func__);
       /* Add Crate1 as a slave */
       tiAddSlave(1);
     }
 
-  if(strcmp("vtp",rol->usrString) == 0)
+  if(tiSlaveConfig.vtp > 0)
     {
-      printf("%s: usrString = %s: Adding VTP\n",
-	     __func__, rol->usrString);
+      printf("%s: Adding VTP\n",
+	     __func__);
       /* Add Crate1 as a slave */
       tiRocEnable(2);
     }
@@ -198,9 +272,10 @@ rocGo()
 
   DALMAGO;
   tiStatus(0);
+  tiTriggerStatus(1);
 
   /* Enable/Set Block Level on modules, if needed, here */
-  if(rocTriggerSource != 0)
+
     {
       printf("************************************************************\n");
       daLogMsg("INFO","TI Configured for Internal Pulser Triggers");
@@ -209,8 +284,8 @@ rocGo()
       if(rocTriggerSource == 1)
 	{
 	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-	  tiSetRandomTrigger(1,0x6);
-	  //tiSetRandomTrigger(1,0xb);
+	  //tiSetRandomTrigger(1,0x6);
+	  tiSetRandomTrigger(1,0x7);
 	}
 
       if(rocTriggerSource == 2)
@@ -220,7 +295,7 @@ rocGo()
 		- arg2 = 0xffff - Continuous
 		- arg2 < 0xffff = arg2 times
 	  */
-	  tiSoftTrig(1,0xffff,100,0);
+	  tiSoftTrig(1,0xffff, 400,1);  // ~10Hz
 	  //tiSoftTrig(1,1,100,0);
 	}
     }
@@ -250,6 +325,7 @@ rocEnd()
 
   DALMAGO;
   tiStatus(0);
+  tiTriggerStatus(1);
   DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());

@@ -26,6 +26,7 @@
 /* Measured longest fiber length in system */
 #define FIBER_LATENCY_OFFSET 0x50
 
+#include <unistd.h>
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
 #include "sdLib.h"
@@ -33,8 +34,71 @@
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
 
+#include "usrstrutils.c"
+
+/* Read the user flags/configuration file. */
+typedef struct
+{
+  int slave1;
+  int slave2;
+  int slave3;
+  int slave4;
+  int vtp;
+} TI_SLAVE_CONFIG;
+
+TI_SLAVE_CONFIG tiSlaveConfig = {0,0,0,0,0};
+
+void
+readUserFlags()
+{
+  int i;
+
+  printf("%s: Reading user flags file.",
+	 __func__);
+  init_strings();
+
+  tiSlaveConfig.slave1 = getflag("slave1");
+  if(tiSlaveConfig.slave1 == 2)
+    {
+      tiSlaveConfig.slave1 = getint("slave1");
+    }
+
+  tiSlaveConfig.slave2 = getflag("slave2");
+  if(tiSlaveConfig.slave2 == 2)
+    {
+      tiSlaveConfig.slave2 = getint("slave2");
+    }
+
+  tiSlaveConfig.slave3 = getflag("slave3");
+  if(tiSlaveConfig.slave3 == 2)
+    {
+      tiSlaveConfig.slave3 = getint("slave3");
+    }
+
+  tiSlaveConfig.slave4 = getflag("slave4");
+  if(tiSlaveConfig.slave4 == 2)
+    {
+      tiSlaveConfig.slave4 = getint("slave4");
+    }
+
+  tiSlaveConfig.vtp = getflag("vtp");
+  if(tiSlaveConfig.vtp == 2)
+    {
+      tiSlaveConfig.vtp = getint("vtp");
+    }
+
+  printf("%s:  tiSlaveConfig = { %d, %d, %d, %d, %d }\n",
+	 __func__,
+	 tiSlaveConfig.slave1,
+	 tiSlaveConfig.slave2,
+	 tiSlaveConfig.slave3,
+	 tiSlaveConfig.slave4,
+	 tiSlaveConfig.vtp);
+
+}
+
 /* Define buffering level */
-#define BUFFERLEVEL 10
+#define BUFFERLEVEL 1
 
 /****************************************
  *  DOWNLOAD
@@ -43,6 +107,8 @@ void
 rocDownload()
 {
   int stat;
+
+  readUserFlags();
 
   /* Setup Address and data modes for DMA transfers
    *
@@ -53,7 +119,8 @@ rocDownload()
    *  sstMode  = 0 (SST160) 1 (SST267) 2 (SST320)
    */
 
-  vmeDmaConfig(2,5,1);
+  if(vmeDmaConfig(2,5,1) < 0)
+    vmeDmaConfig(2,3,0);
 
 
   /*****************
@@ -65,6 +132,13 @@ rocDownload()
   if(stat==0)
     {
       sdSetActiveVmeSlots(0);
+
+      // do this to reset VXSQSFP modules
+      printf("Resetting QSFP->VXS payload modules...\n");
+      sdTestSetStatBitBMask(0xFFFF);
+      usleep(250000);
+      sdTestSetStatBitBMask(0x0000);
+
       sdStatus(0);
     }
 
@@ -77,10 +151,10 @@ rocDownload()
   /* Set prompt output width (100 + 2) * 4 = 408 ns */
   tiSetPromptTriggerWidth(127);
 
-  if(strcmp("vtp",rol->usrString) == 0)
+  if(tiSlaveConfig.vtp > 0)
     {
-      printf("%s: usrString = %s: Adding VTP\n",
-	     __func__, rol->usrString);
+      printf("%s: Adding VTP\n",
+	     __func__);
       /* Add Crate1 as a slave */
       tiRocEnable(2);
     }
@@ -148,6 +222,7 @@ rocGo()
 
   DALMAGO;
   tiStatus(0);
+  tiTriggerStatus(1);
   DALMASTOP;
 
   /* Enable/Set Block Level on modules, if needed, here */
@@ -162,6 +237,7 @@ rocEnd()
 {
   DALMAGO;
   tiStatus(0);
+  tiTriggerStatus(1);
   DALMASTOP;
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
