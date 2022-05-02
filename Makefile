@@ -14,9 +14,9 @@ QUIET	?= 1
 ARCH=armv7l
 
 # Plug in your primary readout lists here..
-VMEROL		= vtp_trigtest.so vtp_roc_mpdro.so
+VMEROL		= vtp_trigtest.so vtp_faro.so
 # Add shared library dependencies here.  (jvme already included)
-ROLLIBS		= -li2c -lmpd -lconfig -lvtp -ldalmaRol
+ROLLIBS		= -li2c -lvtp -ldalmaRol
 
 COMPILE_TIME	= \""$(shell date)"\"
 
@@ -70,8 +70,6 @@ endif
 all: $(VMEROL) $(SOBJS)
 
 crl: $(SOBJS)
-
-vtp_roc_mpdro.so: vtp_roc_mpdro.c vtp_mpdro.c
 
 %.c: %.crl
 	@echo " CCRL   $@"
