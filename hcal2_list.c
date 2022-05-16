@@ -118,6 +118,7 @@ int flag_pulserTriggerInput;
 int flag_LED_NSTEPS; /* Number of steps in sequence */
 int flag_LED_STEP[50]; /* Step LED configuration */
 int flag_LED_NSTEP[50]; /* Number of triggers in this step */
+int flag_VTP_readout = 0; /* 0: VME readout, 1: VTP readout */
 
 
 /* for the calculation of maximum data words in the block transfer */
@@ -299,6 +300,11 @@ rocPrestart()
       faResetToken(faSlot(ifa));
       faResetTriggerCount(faSlot(ifa));
       faEnableSyncReset(faSlot(ifa));
+
+      if(flag_VTP_readout)
+	{
+	  faSetVXSReadout(faSlot(ifa), 1);
+	}
     }
 
   /***************************************
@@ -596,47 +602,50 @@ rocTrigger(int arg)
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
-  /* fADC250 Readout */
-  BANKOPEN(BANK_FADC,BT_UI4,0);
-
-  /* Mask of initialized modules */
-  scanmask = faScanMask();
-  /* Check scanmask for block ready up to 100 times */
-  datascan = faGBlockReady(scanmask, 10);
-  stat = (datascan == scanmask);
-
-  if(stat)
+  if(flag_VTP_readout == 0)
     {
-      if(nfadc == 1)
-	roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
-      nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
+      /* fADC250 Readout */
+      BANKOPEN(BANK_FADC,BT_UI4,0);
 
-      /* Check for ERROR in block read */
-      blockError = faGetBlockError(1);
+      /* Mask of initialized modules */
+      scanmask = faScanMask();
+      /* Check scanmask for block ready up to 100 times */
+      datascan = faGBlockReady(scanmask, 10);
+      stat = (datascan == scanmask);
 
-      if(blockError)
+      if(stat)
 	{
-	  printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
-		 faSlot(ifa), roCount, nwords);
+	  if(nfadc == 1)
+	    roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
+	  nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
 
-	  for(ifa = 0; ifa < nfadc; ifa++)
-	    faResetToken(faSlot(ifa));
+	  /* Check for ERROR in block read */
+	  blockError = faGetBlockError(1);
 
-	  if(nwords > 0)
-	    dma_dabufp += nwords;
+	  if(blockError)
+	    {
+	      printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
+		     faSlot(ifa), roCount, nwords);
+
+	      for(ifa = 0; ifa < nfadc; ifa++)
+		faResetToken(faSlot(ifa));
+
+	      if(nwords > 0)
+		dma_dabufp += nwords;
+	    }
+	  else
+	    {
+	      dma_dabufp += nwords;
+	      faResetToken(faSlot(0));
+	    }
 	}
       else
 	{
-	  dma_dabufp += nwords;
-	  faResetToken(faSlot(0));
+	  printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
+		 roCount, datascan, scanmask);
 	}
+      BANKCLOSE;
     }
-  else
-    {
-      printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
-	     roCount, datascan, scanmask);
-    }
-  BANKCLOSE;
 #endif /* READOUT_FADC */
 #endif /* ENABLE_FADC */
 
@@ -754,23 +763,25 @@ rocTrigger(int arg)
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
-      for(ifa = 0; ifa < nfadc; ifa++)
+      if(flag_VTP_readout == 0)
 	{
-	  davail = faBready(faSlot(ifa));
-	  if(davail > 0)
+	  for(ifa = 0; ifa < nfadc; ifa++)
 	    {
-	      daLogMsg("ERROR",
-		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
-		       faSlot(ifa), davail);
-
-	      iflush = 0;
-	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+	      davail = faBready(faSlot(ifa));
+	      if(davail > 0)
 		{
-		  vmeDmaFlush(faGetA32(faSlot(ifa)));
+		  daLogMsg("ERROR",
+			   "fADC250 (slot %d) Data available (%d) after SYNC event\n",
+			   faSlot(ifa), davail);
+
+		  iflush = 0;
+		  while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+		    {
+		      vmeDmaFlush(faGetA32(faSlot(ifa)));
+		    }
 		}
 	    }
 	}
-
 #endif /* READOUT_FADC */
 #endif /* ENABLE_FADC */
 
@@ -891,6 +902,12 @@ void readUserFlags()
     printf("%s=%d, ",pstext,flag_prescale[i]);
   }
   printf("\n");
+
+  /* VTP readout */
+  flag_VTP_readout = getint("vtp");
+  printf("vtp=%d: %s\n",
+	 flag_VTP_readout,
+	 (flag_VTP_readout) ? "VTP readout" : "VME readout");
 
 #ifdef ENABLE_HCAL_PULSER
   /* Read the hcal pulser step info */

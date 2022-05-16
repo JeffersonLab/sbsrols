@@ -89,6 +89,7 @@ int flag_LED_PATT[128]; /* Step's LED pattern configuration */
 int flag_LED_NPULSE[128]; /* Number of triggers in this step */
 int flag_MODE=0;  /* 0 normal; 1 one box at a time (usual running mode); 2 all boxes at once (pulser only mode)*/
 int jdum=0;  /* count 7 pairs of 0's after each value clocked in for MODE 1*/
+int flag_VTP_readout = 0; /* 0: VME readout, 1: VTP readout */
 
 /* for the calculation of maximum data words in the block transfer */
 unsigned int MAXFADCWORDS=0;
@@ -284,6 +285,11 @@ rocPrestart()
       faResetToken(faSlot(ifa));
       faResetTriggerCount(faSlot(ifa));
       faEnableSyncReset(faSlot(ifa));
+
+      if(flag_VTP_readout)
+	{
+	  faSetVXSReadout(faSlot(ifa), 1);
+	}
     }
 
   /***************************************
@@ -525,47 +531,51 @@ panel triggers and 2nd Hex digit is number of input
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
-  /* fADC250 Readout */
-  BANKOPEN(BANK_FADC,BT_UI4,0);
-
-  /* Mask of initialized modules */
-  scanmask = faScanMask();
-  /* Check scanmask for block ready up to 100 times */
-  datascan = faGBlockReady(scanmask, 100);
-  stat = (datascan == scanmask);
-
-  if(stat)
+  if(flag_VTP_readout == 0)
     {
-      if(nfadc == 1)
-	roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
-      nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
+      /* fADC250 Readout */
+      BANKOPEN(BANK_FADC,BT_UI4,0);
 
-      /* Check for ERROR in block read */
-      blockError = faGetBlockError(1);
+      /* Mask of initialized modules */
+      scanmask = faScanMask();
+      /* Check scanmask for block ready up to 100 times */
+      datascan = faGBlockReady(scanmask, 100);
+      stat = (datascan == scanmask);
 
-      if(blockError)
+      if(stat)
 	{
-	  printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
-		 faSlot(ifa), roCount, nwords);
+	  if(nfadc == 1)
+	    roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
+	  nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
 
-	  for(ifa = 0; ifa < nfadc; ifa++)
-	    faResetToken(faSlot(ifa));
+	  /* Check for ERROR in block read */
+	  blockError = faGetBlockError(1);
 
-	  if(nwords > 0)
-	    dma_dabufp += nwords;
+	  if(blockError)
+	    {
+	      printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
+		     faSlot(ifa), roCount, nwords);
+
+	      for(ifa = 0; ifa < nfadc; ifa++)
+		faResetToken(faSlot(ifa));
+
+	      if(nwords > 0)
+		dma_dabufp += nwords;
+	    }
+	  else
+	    {
+	      dma_dabufp += nwords;
+	      faResetToken(faSlot(0));
+	    }
 	}
       else
 	{
-	  dma_dabufp += nwords;
-	  faResetToken(faSlot(0));
+	  printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
+		 roCount, datascan, scanmask);
 	}
+      BANKCLOSE;
     }
-  else
-    {
-      printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
-	     roCount, datascan, scanmask);
-    }
-  BANKCLOSE;
+
 #endif /* READOUT_FADC */
 #endif /* ENABLE_FADC */
 
@@ -590,19 +600,22 @@ panel triggers and 2nd Hex digit is number of input
 
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
-      for(ifa = 0; ifa < nfadc; ifa++)
+      if(flag_VTP_readout == 0)
 	{
-	  davail = faBready(faSlot(ifa));
-	  if(davail > 0)
+	  for(ifa = 0; ifa < nfadc; ifa++)
 	    {
-	      daLogMsg("ERROR",
-		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
-		       faSlot(ifa), davail);
-
-	      iflush = 0;
-	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+	      davail = faBready(faSlot(ifa));
+	      if(davail > 0)
 		{
-		  vmeDmaFlush(faGetA32(faSlot(ifa)));
+		  daLogMsg("ERROR",
+			   "fADC250 (slot %d) Data available (%d) after SYNC event\n",
+			   faSlot(ifa), davail);
+
+		  iflush = 0;
+		  while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+		    {
+		      vmeDmaFlush(faGetA32(faSlot(ifa)));
+		    }
 		}
 	    }
 	}
@@ -612,7 +625,7 @@ panel triggers and 2nd Hex digit is number of input
     }
 
 #ifdef ENABLE_HCAL_PULSER
-  if(flag_PULSER_ENABLED && pulser_TRIG) 
+  if(flag_PULSER_ENABLED && pulser_TRIG)
 {
     HCAL_LED_COUNT++;
     BANKOPEN(BANK_HCAL_PULSER,BT_UI4,0);
@@ -628,7 +641,7 @@ panel triggers and 2nd Hex digit is number of input
 
     /* Run the HCAL pulser clock-in code */
  if(flag_MODE==0){
-    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE) 
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE)
     {
       HCAL_LED_COUNT=0;
       HCAL_LED_ITER++;
@@ -646,7 +659,7 @@ panel triggers and 2nd Hex digit is number of input
     }
  }else if(flag_MODE==1){
 /* mode 1, one box at a time, the usual running mode */
-    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE) 
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE)
     {
     if(jdum<7){jdum++;
                HCAL_LED_COUNT=0;
@@ -671,7 +684,7 @@ panel triggers and 2nd Hex digit is number of input
        		   }
     }
  }else{
-    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE) 
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE)
     {
       HCAL_LED_COUNT=0;
       HCAL_LED_ITER++;
@@ -761,6 +774,12 @@ void readUserFlags()
     printf("%s=%d, ",pstext,flag_prescale[i]);
   }
   printf("\n");
+
+  /* VTP readout */
+  flag_VTP_readout = getint("vtp");
+  printf("vtp=%d: %s\n",
+	 flag_VTP_readout,
+	 (flag_VTP_readout) ? "VTP readout" : "VME readout");
 
 #ifdef ENABLE_HCAL_PULSER
   /* Read the hcal pulser step info */
