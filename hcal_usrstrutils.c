@@ -213,7 +213,7 @@ void init_strings()
     free(ffile_name);
   }
 #ifdef _USRSTRUTILS_DEBUG
-  daLogMsg("Run time Config: %s\n",file_configusrstr);
+  // daLogMsg("Run time Config: %s\n",file_configusrstr);
 #endif
 }
 

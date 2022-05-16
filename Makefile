@@ -23,7 +23,7 @@ VMEROL			= hcal1_list.so hcal1_slave5_list.so hcal2_slave_list.so hcal2_slave5_l
 	hcal1_scalers_slave_list.so hcal2_scalers_slave_list.so \
 	hcal1_scalers_slave5_list.so hcal2_scalers_slave5_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -lsd -lts -lfadc -lf1tdc -lhcal
+ROLLIBS			= -lsd -lts -lfadc -lf1tdc -lhcal -ldalmaRol
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include

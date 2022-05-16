@@ -16,6 +16,10 @@
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
 #else
+#ifdef TI_SLAVE5
+#define TI_SLAVE
+#define TI_FLAG TI_INIT_SLAVE_FIBER_5
+#endif
 /* TS trigger source (e.g. fiber), POLL for available data */
 #define TI_READOUT TI_READOUT_TS_POLL
 #endif
@@ -31,6 +35,9 @@
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
 #define BUFFERLEVEL 10
+
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
 
 /*
   enable triggers (random or fixed rate) from internal pulser
@@ -95,10 +102,6 @@ rocDownload()
 
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
-
-  /* Add HCAL2 to port 1*/
-  //  tiAddSlave(1);
-
 #endif
 
   /* Init the SD library so we can get status info */
@@ -122,13 +125,9 @@ void
 rocPrestart()
 {
 
-#ifdef TI_MASTER
-  /* Set number of events per block (broadcasted to all connected TI Slaves)*/
-  tiSetBlockLevel(blockLevel);
-  printf("rocPrestart: Block Level set to %d\n",blockLevel);
-#endif
-
+  DALMAGO;
   tiStatus(0);
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -145,16 +144,42 @@ rocGo()
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
 
-  /* Get the current Block Level */
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("rocGo: Block Level set to %d\n",blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
 
 #ifdef TI_SLAVE
   /* In case of slave, set TI busy to be enabled for full buffer level */
-  tiUseBroadcastBufferLevel(1);
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
 #endif
 
   /* Enable/Set Block Level on modules, if needed, here */
+
+
+#ifdef TI_MASTER
 #if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
   printf("************************************************************\n");
   printf("%s: TI Configured for Internal Pulser Triggers\n",
@@ -162,7 +187,6 @@ rocGo()
   printf("************************************************************\n");
 #endif
 
-#ifdef TI_MASTER
   /* Example: How to start internal pulser trigger */
 #ifdef INTRANDOMPULSER
   /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
@@ -199,7 +223,9 @@ rocEnd()
 #endif
 #endif
 
+  DALMAGO;
   tiStatus(0);
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -214,7 +240,7 @@ rocTrigger(int arg)
   int dCnt;
 
   /* Set TI output 1 high for diagnostics */
-  tiSetOutputPort(1,0,0,0);
+  /*BQ  tiSetOutputPort(1,0,0,0);*/
 
   /* Readout the trigger block from the TI
      Trigger Block MUST be readout first */
@@ -238,8 +264,14 @@ rocTrigger(int arg)
   BANKCLOSE;
 
   /* Set TI output 0 low */
-  tiSetOutputPort(0,0,0,0);
+  /*BQ    tiSetOutputPort(0,0,0,0);*/
 
+}
+
+void
+rocLoad()
+{
+  dalmaInit(1);
 }
 
 void
@@ -249,6 +281,7 @@ rocCleanup()
 #ifdef TI_MASTER
   tiResetSlaveConfig();
 #endif
+  dalmaClose();
 }
 
 

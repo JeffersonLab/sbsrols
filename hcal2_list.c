@@ -55,6 +55,12 @@
 #include "tiprimary_list.c" /* source required for CODA */
 #include "sdLib.h"
 
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
+/* Routines to add string buffers to banks */
+#include "/adaqfs/home/sbs-onl/rol_common/rocUtils.c"
+
 #ifdef ENABLE_FADC
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
@@ -70,7 +76,7 @@
 #include "hcalLib.h"
 #endif
 
-#define BUFFERLEVEL 1
+#define BUFFERLEVEL 5
 
 #ifdef ENABLE_FADC
 /* FADC Library Variables */
@@ -112,6 +118,7 @@ int flag_pulserTriggerInput;
 int flag_LED_NSTEPS; /* Number of steps in sequence */
 int flag_LED_STEP[50]; /* Step LED configuration */
 int flag_LED_NSTEP[50]; /* Number of triggers in this step */
+int flag_VTP_readout = 0; /* 0: VME readout, 1: VTP readout */
 
 
 /* for the calculation of maximum data words in the block transfer */
@@ -187,6 +194,8 @@ rocDownload()
 
   /* Add trigger latch pattern to datastream */
   tiSetFPInputReadout(1);
+#else
+  tiSetFiberSyncDelay(0x9);
 #endif /* TI_MASTER */
   tiSetBusySource(0xA,0); // adding F1 busy AC 10/01/2021
 
@@ -208,7 +217,7 @@ rocDownload()
   set_runstatus(0);
 #endif
 
-  tiStatus(0);
+  tiStatus(1);
   sdStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -291,16 +300,18 @@ rocPrestart()
       faResetToken(faSlot(ifa));
       faResetTriggerCount(faSlot(ifa));
       faEnableSyncReset(faSlot(ifa));
-    }
 
-  faGStatus(0);
+      if(flag_VTP_readout)
+	{
+	  faSetVXSReadout(faSlot(ifa), 1);
+	}
+    }
 
   /***************************************
    *   SD SETUP
    ***************************************/
   sdInit(0);   /* Initialize the SD library */
   sdSetActiveVmeSlots(faScanMask()); /* Use the fadcSlotMask to configure the SD */
-  sdStatus();
 #endif /* ENABLE_FADC */
 
 #ifdef ENABLE_F1
@@ -375,9 +386,9 @@ rocPrestart()
     /* Clock in the first setting */
     HCAL_LED_C_STEP = flag_LED_STEP[0];
     HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
-    hcalClkIn(HCAL_LED_C_STEP);
+    /*BQ     hcalClkIn(HCAL_LED_C_STEP);*/
   } else {
-    hcalClkIn(0);
+    /*BQ      hcalClkIn(0);*/
   }
 
 #endif
@@ -395,8 +406,41 @@ rocPrestart()
   printf("rocPrestart: Block Level set to %d\n",blockLevel);
 #endif /* TI_MASTER */
 
+  DALMAGO;
+#ifdef ENABLE_FADC
+  /* FADC Event status - Is all data read out */
+  faGStatus(0);
+#endif /* ENABLE_FADC */
+#ifdef ENABLE_F1
+  f1GStatus(0);
+#endif /* End: ENABLE_F1 */
+  tiStatus(1);
+  sdStatus();
+  DALMASTOP;
 
-  tiStatus(0);
+
+  /* Add configuration files to user event type 137 */
+  int maxsize = MAX_EVENT_LENGTH-128, inum = 0, nwords = 0;
+
+  UEOPEN(137, BT_BANK, 0);
+  if(rol->usrConfig)
+    {
+      nwords = rocFile2Bank(rol->usrConfig,
+			    (uint8_t *)rol->dabufp,
+			    ROCID, inum++, maxsize);
+      if(nwords > 0)
+	rol->dabufp += nwords;
+    }
+
+  nwords = rocFile2Bank("/home/sbs-onl/cfg/f1tdc/hcal_f1tdc_3125.cfg",
+			(uint8_t *)rol->dabufp,
+			ROCID, inum++, maxsize);
+
+  if(nwords > 0)
+    rol->dabufp += nwords;
+
+  UECLOSE;
+
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -408,10 +452,41 @@ rocGo()
   int fadc_mode = 0;
   unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
 
-  /* Get the current block level */
+  /* Print out the Run Number and Run Type (config id) */
+  printf("rocGo: Activating Run Number %d, Config id = %d\n",
+	 rol->runNumber,rol->runType);
+
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("%s: Current Block Level = %d\n",
-	 __FUNCTION__,blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
+
+#ifdef TI_SLAVE
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
+#endif
 
 #ifdef ENABLE_FADC
   faGSetBlockLevel(blockLevel);
@@ -454,29 +529,36 @@ rocEnd()
 #ifdef ENABLE_FADC
   /* FADC Disable */
   faGDisable(0);
+#endif /* ENABLE_FADC */
 
+  DALMAGO;
+#ifdef ENABLE_FADC
   /* FADC Event status - Is all data read out */
   faGStatus(0);
 #endif /* ENABLE_FADC */
-
+#ifdef ENABLE_F1
+  f1GStatus(0);
+#endif /* End: ENABLE_F1 */
+  tiStatus(1);
+  sdStatus();
+  DALMASTOP;
 
 #ifdef ENABLE_F1
   /* F1TDC Event status - Is all data read out */
-  f1GStatus(0);
+  printf("%s: Resetting f1tdcs.", __func__);
   int islot = 0;
   for(islot = 0; islot<NF1TDC; islot++) {
     F1_SLOT=f1ID[islot];
     f1Reset(F1_SLOT,0);
   }
+  f1GStatus(0);
 #endif /* End: ENABLE_F1 */
 
-  tiStatus(0);
-  sdStatus();
 #ifdef ENABLE_HCAL_PULSER
-  hcalClkIn(0); /* Turn off LEDs at the end */
+  /*BQ  hcalClkIn(0);  // Turn off LEDs at the end  */
 #endif
   /* Turn off all output ports */
-  tiSetOutputPort(0,0,0,0);
+  /*BQ  tiSetOutputPort(0,0,0,0);*/
 
 #ifdef FADC_SCALERS
   /* Resume stand alone scaler server */
@@ -520,53 +602,56 @@ rocTrigger(int arg)
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
-  /* fADC250 Readout */
-  BANKOPEN(BANK_FADC,BT_UI4,0);
-
-  /* Mask of initialized modules */
-  scanmask = faScanMask();
-  /* Check scanmask for block ready up to 100 times */
-  datascan = faGBlockReady(scanmask, 10);
-  stat = (datascan == scanmask);
-
-  if(stat)
+  if(flag_VTP_readout == 0)
     {
-      if(nfadc == 1)
-	roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
-      nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
+      /* fADC250 Readout */
+      BANKOPEN(BANK_FADC,BT_UI4,0);
 
-      /* Check for ERROR in block read */
-      blockError = faGetBlockError(1);
+      /* Mask of initialized modules */
+      scanmask = faScanMask();
+      /* Check scanmask for block ready up to 100 times */
+      datascan = faGBlockReady(scanmask, 10);
+      stat = (datascan == scanmask);
 
-      if(blockError)
+      if(stat)
 	{
-	  printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
-		 faSlot(ifa), roCount, nwords);
+	  if(nfadc == 1)
+	    roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
+	  nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
 
-	  for(ifa = 0; ifa < nfadc; ifa++)
-	    faResetToken(faSlot(ifa));
+	  /* Check for ERROR in block read */
+	  blockError = faGetBlockError(1);
 
-	  if(nwords > 0)
-	    dma_dabufp += nwords;
+	  if(blockError)
+	    {
+	      printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
+		     faSlot(ifa), roCount, nwords);
+
+	      for(ifa = 0; ifa < nfadc; ifa++)
+		faResetToken(faSlot(ifa));
+
+	      if(nwords > 0)
+		dma_dabufp += nwords;
+	    }
+	  else
+	    {
+	      dma_dabufp += nwords;
+	      faResetToken(faSlot(0));
+	    }
 	}
       else
 	{
-	  dma_dabufp += nwords;
-	  faResetToken(faSlot(0));
+	  printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
+		 roCount, datascan, scanmask);
 	}
+      BANKCLOSE;
     }
-  else
-    {
-      printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
-	     roCount, datascan, scanmask);
-    }
-  BANKCLOSE;
 #endif /* READOUT_FADC */
 #endif /* ENABLE_FADC */
 
 #ifdef ENABLE_F1
 #ifdef READOUT_F1
-  int roflag = 1;  
+  int roflag = 1;
 
   if(NF1TDC <= 1) {
     roflag = 1; /* DMA Transfer */
@@ -630,11 +715,23 @@ rocTrigger(int arg)
       *dma_dabufp++ = LSWAP(0xda000bad);
 
       /* Just clear the F1 boards here worry about syncronizing later */
-      f1GClear();
+      f1Clear(F1_SLOT);
 
     }
 
   *dma_dabufp++ = LSWAP(0xda0000ff); /* Event EOB */
+  BANKCLOSE;
+
+  unsigned int scaler1 = 0, scaler2 = 0;
+  BANKOPEN(0x0F10, BT_UI4, 0);
+  for(islot = 0; islot < NF1TDC; islot++)
+    {
+      scaler1 = 0; scaler2 = 0;
+      f1GetScalers(f1Slot(islot), &scaler1, &scaler2);
+      *dma_dabufp++ = f1Slot(islot);
+      *dma_dabufp++ = scaler1;
+      *dma_dabufp++ = scaler2;
+    }
   BANKCLOSE;
 
 #ifdef DISABLE_MULTIBLOCK_READOUT
@@ -656,7 +753,7 @@ rocTrigger(int arg)
 		   davail,roCount);
 
 	  iflush = 0;
-	  /* 
+	  /*
 	  while(tiBReady() && (++iflush < maxflush))
 	    {
 	      vmeDmaFlush(tiGetAdr32());
@@ -666,23 +763,25 @@ rocTrigger(int arg)
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
-      for(ifa = 0; ifa < nfadc; ifa++)
+      if(flag_VTP_readout == 0)
 	{
-	  davail = faBready(faSlot(ifa));
-	  if(davail > 0)
+	  for(ifa = 0; ifa < nfadc; ifa++)
 	    {
-	      daLogMsg("ERROR",
-		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
-		       faSlot(ifa), davail);
-
-	      iflush = 0;
-	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+	      davail = faBready(faSlot(ifa));
+	      if(davail > 0)
 		{
-		  vmeDmaFlush(faGetA32(faSlot(ifa)));
+		  daLogMsg("ERROR",
+			   "fADC250 (slot %d) Data available (%d) after SYNC event\n",
+			   faSlot(ifa), davail);
+
+		  iflush = 0;
+		  while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+		    {
+		      vmeDmaFlush(faGetA32(faSlot(ifa)));
+		    }
 		}
 	    }
 	}
-
 #endif /* READOUT_FADC */
 #endif /* ENABLE_FADC */
 
@@ -704,7 +803,7 @@ rocTrigger(int arg)
 		  vmeDmaFlush(f1GetA32(f1Slot(islot)));
 		  }*/
 	      /* Just clear the boards here */
-	      f1GClear();
+	      f1Clear(f1Slot(islot));
 
 #ifdef OLDDMAFLUSH
 	      unsigned int trash[512];
@@ -751,9 +850,21 @@ rocTrigger(int arg)
 
 }
 
+
+void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
 void
 rocCleanup()
 {
+
+#ifdef TI_MASTER
+  tiResetSlaveConfig();
+#endif
+  dalmaClose();
 
 #ifdef ENABLE_FADC
   printf("%s: Reset all FADCs\n",__FUNCTION__);
@@ -791,6 +902,12 @@ void readUserFlags()
     printf("%s=%d, ",pstext,flag_prescale[i]);
   }
   printf("\n");
+
+  /* VTP readout */
+  flag_VTP_readout = getint("vtp");
+  printf("vtp=%d: %s\n",
+	 flag_VTP_readout,
+	 (flag_VTP_readout) ? "VTP readout" : "VME readout");
 
 #ifdef ENABLE_HCAL_PULSER
   /* Read the hcal pulser step info */

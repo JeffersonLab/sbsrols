@@ -44,6 +44,13 @@
 #include "dmaBankTools.h"
 #include "tiprimary_list.c" /* source required for CODA */
 #include "sdLib.h"
+
+/* Library to pipe stdout to daLogMsg */
+#include "dalmaRolLib.h"
+
+/* Routines to add string buffers to banks */
+#include "/adaqfs/home/sbs-onl/rol_common/rocUtils.c"
+
 #ifdef ENABLE_FADC
 #include "fadcLib.h"        /* library of FADC250 routines */
 #include "fadc250Config.h"
@@ -51,10 +58,10 @@
 #include "hcal_usrstrutils.c" /* So we can read from a flags file */
 
 #ifdef ENABLE_HCAL_PULSER
-#include "hcalLib.h"   /* Source of hcalClkIn is here (../linuxvme/include/hcalLib.h?? */
+#include "hcalLib.h"   /* Source of hcalClkIn is here (../linuxvme/include/hcalLib.h??  and ../linuxvme/hcal_pulser/hcalLib.c   */
 #endif
 
-#define BUFFERLEVEL 1
+#define BUFFERLEVEL 5
 
 #ifdef ENABLE_FADC
 /* FADC Library Variables */
@@ -78,9 +85,11 @@ int flag_prescale[NINPUTS];
 /* Flags for HCal pulser */
 int flag_pulserTriggerInput;
 int flag_LED_NSTEPS; /* Number of steps in sequence */
-int flag_LED_STEP[50]; /* Step LED configuration */
-int flag_LED_NSTEP[50]; /* Number of triggers in this step */
-
+int flag_LED_PATT[128]; /* Step's LED pattern configuration */
+int flag_LED_NPULSE[128]; /* Number of triggers in this step */
+int flag_MODE=0;  /* 0 normal; 1 one box at a time (usual running mode); 2 all boxes at once (pulser only mode)*/
+int jdum=0;  /* count 7 pairs of 0's after each value clocked in for MODE 1*/
+int flag_VTP_readout = 0; /* 0: VME readout, 1: VTP readout */
 
 /* for the calculation of maximum data words in the block transfer */
 unsigned int MAXFADCWORDS=0;
@@ -103,11 +112,11 @@ struct timespec last_time;
 int flag_PULSER_ENABLED; /* Determined based on ps and nsteps */
 unsigned int HCAL_LED_COUNT = 0;
 unsigned int HCAL_LED_ITER=0;
-unsigned int HCAL_LED_C_STEP;
-unsigned int HCAL_LED_C_NSTEP;
+unsigned int HCAL_LED_PATT;
+unsigned int HCAL_LED_NPULSE;
 #endif
 
-
+int pulser_TRIG, cosmic_TRIG, hcal_sum_TRIG;
 
 
 /* function prototypes */
@@ -169,6 +178,8 @@ rocDownload()
 
   /* Add HCAL2 to port 1*/
   tiAddSlave(1);
+#else
+  tiSetFiberSyncDelay(0x9);
 #endif /* TI_MASTER */
 
 
@@ -190,7 +201,7 @@ rocDownload()
   set_runstatus(0);
 #endif
 
-  tiStatus(0);
+  tiStatus(1);
   sdStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -274,9 +285,12 @@ rocPrestart()
       faResetToken(faSlot(ifa));
       faResetTriggerCount(faSlot(ifa));
       faEnableSyncReset(faSlot(ifa));
-    }
 
-  faGStatus(0);
+      if(flag_VTP_readout)
+	{
+	  faSetVXSReadout(faSlot(ifa), 1);
+	}
+    }
 
   /***************************************
    *   SD SETUP
@@ -285,50 +299,29 @@ rocPrestart()
   sdSetActiveVmeSlots(faScanMask()); /* Use the fadcSlotMask to configure the SD */
 #endif /* ENABLE_FADC */
 
-  sdStatus();
-
-
 #ifdef ENABLE_HCAL_PULSER
   if(flag_PULSER_ENABLED) {
     HCAL_LED_ITER=0;
     HCAL_LED_COUNT=0;
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("HCAL Pulser sequence %i steps: ",flag_LED_NSTEPS);
+    printf("HCAL Pulser sequence: ");
     for(i = 0 ; i < flag_LED_NSTEPS; i++) {
-      printf(" %d/%d",flag_LED_STEP[i],flag_LED_NSTEP[i]);
+      printf(" %d/%d",flag_LED_PATT[i],flag_LED_NPULSE[i]);
     }
     printf("\n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-    printf("**************************************************** \n");
-
-    /* Clock in the first setting */
-    /*    .... first, clear all boxes...twice, if we don't switch to clocking in to each board separately */
-    HCAL_LED_C_STEP = flag_LED_STEP[0];
-    HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
     int idum;
-      for(idum=0;idum<16;idum++){
-    hcalClkIn(0);
-      }
-    hcalClkIn(HCAL_LED_C_STEP);
-    /*    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);
-    */  
-} else {
+    /* Clock in the first setting */
+    HCAL_LED_PATT = flag_LED_PATT[0];
+    HCAL_LED_NPULSE = flag_LED_NPULSE[0];
+    for(idum=0;idum<14;idum++){hcalClkIn(0);}
+    hcalClkIn(HCAL_LED_PATT);
+    hcalClkIn(HCAL_LED_PATT);  /* into both boards of first box */
+   /*   printf("Re-enabling pulser\n");*/
+      hcalClkIn(69);  /* re-enable pulser (suspended during clock-in) */
+      if(flag_MODE==1)jdum=0;
+  } else {
+    int idum;
     printf("Pulser_enabled is *False*");
-    hcalClkIn(0);
+    for(idum=0;idum<16;idum++){hcalClkIn(0);}
   }
 
 #endif
@@ -340,7 +333,30 @@ rocPrestart()
 #endif /* TI_MASTER */
 
 
-  tiStatus(0);
+
+  DALMAGO;
+  tiStatus(1);
+  sdStatus();
+#ifdef ENABLE_FADC
+  faGStatus(0);
+#endif /* ENABLE_FADC */
+  DALMASTOP;
+
+  /* Add configuration files to user event type 137 */
+  int maxsize = MAX_EVENT_LENGTH-128, inum = 0, nwords = 0;
+
+  if(rol->usrConfig)
+    {
+      UEOPEN(137, BT_BANK, 0);
+      nwords = rocFile2Bank(rol->usrConfig,
+			    (uint8_t *)rol->dabufp,
+			    ROCID, inum++, maxsize);
+
+      if(nwords > 0)
+	rol->dabufp += nwords;
+
+      UECLOSE;
+    }
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -352,10 +368,37 @@ rocGo()
   int fadc_mode = 0;
   unsigned int pl=0, ptw=0, nsb=0, nsa=0, np=0;
 
-  /* Get the current block level */
+  int bufferLevel = 0;
+  /* Get the current buffering settings (blockLevel, bufferLevel) */
   blockLevel = tiGetCurrentBlockLevel();
-  printf("%s: Current Block Level = %d\n",
-	 __FUNCTION__,blockLevel);
+  bufferLevel = tiGetBroadcastBlockBufferLevel();
+  printf("%s: Block Level = %d,  Buffer Level (broadcasted) = %d (%d)\n",
+	 __func__,
+	 blockLevel,
+	 tiGetBlockBufferLevel(),
+	 bufferLevel);
+
+#ifdef TI_SLAVE
+  /* In case of slave, set TI busy to be enabled for full buffer level */
+
+  /* Check first for valid blockLevel and bufferLevel */
+  if((bufferLevel > 10) || (blockLevel > 1))
+    {
+      daLogMsg("ERROR","Invalid blockLevel / bufferLevel received: %d / %d",
+	       blockLevel, bufferLevel);
+      tiUseBroadcastBufferLevel(0);
+      tiSetBlockBufferLevel(1);
+
+      /* Cannot help the TI blockLevel with the current library.
+	 modules can be spared, though
+      */
+      blockLevel = 1;
+    }
+  else
+    {
+      tiUseBroadcastBufferLevel(1);
+    }
+#endif
 
 #ifdef ENABLE_FADC
   faGSetBlockLevel(blockLevel);
@@ -394,18 +437,24 @@ rocEnd()
 #ifdef ENABLE_FADC
   /* FADC Disable */
   faGDisable(0);
+#endif /* ENABLE_FADC */
 
+  DALMAGO;
+#ifdef ENABLE_FADC
   /* FADC Event status - Is all data read out */
   faGStatus(0);
 #endif /* ENABLE_FADC */
-
-  tiStatus(0);
+  tiStatus(1);
   sdStatus();
+  DALMASTOP;
+
 #ifdef ENABLE_HCAL_PULSER
-  hcalClkIn(0); /* Turn off LEDs at the end */
+  int idum;
+    for(idum=0;idum<16;idum++){hcalClkIn(0);} /* Turn off LEDs at the end */
+    printf("Cleared pulser boxes\n");
 #endif
   /* Turn off all output ports */
-  tiSetOutputPort(0,0,0,0);
+    /*BQ  tiSetOutputPort(0,0,0,0);   */
 
 #ifdef FADC_SCALERS
   /* Resume stand alone scaler server */
@@ -437,7 +486,31 @@ rocTrigger(int arg)
   vmeDmaConfig(2,5,1);
   dCnt = tiReadTriggerBlock(dma_dabufp);
 
+ int TRIG_word=*(dma_dabufp+2);
+ /* printf("TRIG_word %8X %8x %2X\n",TRIG_word,TRIG_word&0XFF000000,(TRIG_word&0XFF000000)>>24);*/
+ /*For TS triggers, first Hex digit is 2 (or at least has 2 set?) for front
+panel triggers and 2nd Hex digit is number of input
+1  Shower
+2  Hcal Sum
+3  Coincidence
+4  HRS
+5  Grinch LED
+6  HCal LED pulser
+7  HCal cosmic paddle     */
+ int TRIG_type=(TRIG_word&0x0F000000)>>24;
+ pulser_TRIG=(TRIG_type==6);
+ cosmic_TRIG=(TRIG_type==7);
+ hcal_sum_TRIG=(TRIG_type==2);
+ /* printf("TRIG_type: %X  pulser: %i   cosmic: %i   sum:  %i\n",TRIG_type,pulser_TRIG,cosmic_TRIG,hcal_sum_TRIG);*/
 
+ /*Next 3 lines for TI in Roc 16 crate
+ pulser_TRIG=(TRIG_word0X2000000)>>25;
+ cosmic_TRIG=(TRIG_word&0X1000000)>>24;
+ hcal_sum_TRIG=(TRIG_word&0X4000000)>>26;*/
+
+ /* if(pulser_TRIG){printf("pulser\n");}
+ if(cosmic_TRIG){printf("cosmic\n");}
+ if(hcal_sum_TRIG){printf("hcal_sum\n");}*/
   /*
    int idum;
     printf("TI says trigger block length is %d \n",dCnt);
@@ -458,47 +531,51 @@ rocTrigger(int arg)
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
 
-  /* fADC250 Readout */
-  BANKOPEN(BANK_FADC,BT_UI4,0);
-
-  /* Mask of initialized modules */
-  scanmask = faScanMask();
-  /* Check scanmask for block ready up to 100 times */
-  datascan = faGBlockReady(scanmask, 100);
-  stat = (datascan == scanmask);
-
-  if(stat)
+  if(flag_VTP_readout == 0)
     {
-      if(nfadc == 1)
-	roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
-      nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
+      /* fADC250 Readout */
+      BANKOPEN(BANK_FADC,BT_UI4,0);
 
-      /* Check for ERROR in block read */
-      blockError = faGetBlockError(1);
+      /* Mask of initialized modules */
+      scanmask = faScanMask();
+      /* Check scanmask for block ready up to 100 times */
+      datascan = faGBlockReady(scanmask, 100);
+      stat = (datascan == scanmask);
 
-      if(blockError)
+      if(stat)
 	{
-	  printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
-		 faSlot(ifa), roCount, nwords);
+	  if(nfadc == 1)
+	    roType = 1;   /* otherwise roType = 2   multiboard reaodut with token passing */
+	  nwords = faReadBlock(0, dma_dabufp, MAXFADCWORDS, roType);
 
-	  for(ifa = 0; ifa < nfadc; ifa++)
-	    faResetToken(faSlot(ifa));
+	  /* Check for ERROR in block read */
+	  blockError = faGetBlockError(1);
 
-	  if(nwords > 0)
-	    dma_dabufp += nwords;
+	  if(blockError)
+	    {
+	      printf("ERROR: Slot %d: in transfer (event = %d), nwords = 0x%x\n",
+		     faSlot(ifa), roCount, nwords);
+
+	      for(ifa = 0; ifa < nfadc; ifa++)
+		faResetToken(faSlot(ifa));
+
+	      if(nwords > 0)
+		dma_dabufp += nwords;
+	    }
+	  else
+	    {
+	      dma_dabufp += nwords;
+	      faResetToken(faSlot(0));
+	    }
 	}
       else
 	{
-	  dma_dabufp += nwords;
-	  faResetToken(faSlot(0));
+	  printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
+		 roCount, datascan, scanmask);
 	}
+      BANKCLOSE;
     }
-  else
-    {
-      printf("ERROR: Event %d: Datascan != Scanmask  (0x%08x != 0x%08x)\n",
-	     roCount, datascan, scanmask);
-    }
-  BANKCLOSE;
+
 #endif /* READOUT_FADC */
 #endif /* ENABLE_FADC */
 
@@ -523,19 +600,22 @@ rocTrigger(int arg)
 
 #ifdef ENABLE_FADC
 #ifdef READOUT_FADC
-      for(ifa = 0; ifa < nfadc; ifa++)
+      if(flag_VTP_readout == 0)
 	{
-	  davail = faBready(faSlot(ifa));
-	  if(davail > 0)
+	  for(ifa = 0; ifa < nfadc; ifa++)
 	    {
-	      daLogMsg("ERROR",
-		       "fADC250 (slot %d) Data available (%d) after SYNC event\n",
-		       faSlot(ifa), davail);
-
-	      iflush = 0;
-	      while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+	      davail = faBready(faSlot(ifa));
+	      if(davail > 0)
 		{
-		  vmeDmaFlush(faGetA32(faSlot(ifa)));
+		  daLogMsg("ERROR",
+			   "fADC250 (slot %d) Data available (%d) after SYNC event\n",
+			   faSlot(ifa), davail);
+
+		  iflush = 0;
+		  while(faBready(faSlot(ifa)) && (++iflush < maxflush))
+		    {
+		      vmeDmaFlush(faGetA32(faSlot(ifa)));
+		    }
 		}
 	    }
 	}
@@ -545,36 +625,83 @@ rocTrigger(int arg)
     }
 
 #ifdef ENABLE_HCAL_PULSER
-  if(flag_PULSER_ENABLED) {
+  if(flag_PULSER_ENABLED && pulser_TRIG)
+{
     HCAL_LED_COUNT++;
     BANKOPEN(BANK_HCAL_PULSER,BT_UI4,0);
     /**dma_dabufp++ = LSWAP(tiGetIntCount());*/
         *dma_dabufp++ = LSWAP(HCAL_LED_ITER);
-    *dma_dabufp++ = LSWAP(HCAL_LED_C_STEP);
+    *dma_dabufp++ = LSWAP(HCAL_LED_PATT);
     *dma_dabufp++ = LSWAP(HCAL_LED_COUNT);
-    *dma_dabufp++ = LSWAP((HCAL_LED_ITER<<22)|(HCAL_LED_C_STEP<<16)|HCAL_LED_COUNT);
+    *dma_dabufp++ = LSWAP((HCAL_LED_ITER<<22)|(HCAL_LED_PATT<<16)|HCAL_LED_COUNT);
+    int idum;
+    if(flag_MODE==0){idum=0;}else if(flag_MODE==1){idum=jdum+1;}else{idum=9;}
+    *dma_dabufp++ = LSWAP(idum);
     BANKCLOSE;
-    /* Run the HCAL pulser clock in code */
-    if(HCAL_LED_COUNT>=HCAL_LED_C_NSTEP) {
+
+    /* Run the HCAL pulser clock-in code */
+ if(flag_MODE==0){
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE)
+    {
       HCAL_LED_COUNT=0;
       HCAL_LED_ITER++;
       if(HCAL_LED_ITER>=flag_LED_NSTEPS) {
         HCAL_LED_ITER=0;
       }
-      HCAL_LED_C_STEP=flag_LED_STEP[HCAL_LED_ITER];
-      HCAL_LED_C_NSTEP=flag_LED_NSTEP[HCAL_LED_ITER];
+      HCAL_LED_PATT=flag_LED_PATT[HCAL_LED_ITER];
+      HCAL_LED_NPULSE=flag_LED_NPULSE[HCAL_LED_ITER];
       printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
-        HCAL_LED_ITER,HCAL_LED_C_STEP,tiGetIntCount());
-      hcalClkIn(HCAL_LED_C_STEP);
-      /*      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP); */
+        HCAL_LED_ITER,HCAL_LED_PATT,tiGetIntCount());
+      hcalClkIn(HCAL_LED_PATT);
+      hcalClkIn(HCAL_LED_PATT);   /* into both boards of one box */
+     /* printf("Re-enabling pulser\n");  */
+       hcalClkIn(69);  /* re-enable pulser (suspended during clock-in */
     }
-  }
+ }else if(flag_MODE==1){
+/* mode 1, one box at a time, the usual running mode */
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE)
+    {
+    if(jdum<7){jdum++;
+               HCAL_LED_COUNT=0;
+               hcalClkIn(0);
+               hcalClkIn(0);
+	       hcalClkIn(69);  /* move non-zero values along to next box.. and re-enable */
+              }else{
+      jdum=0;
+      HCAL_LED_COUNT=0;
+      HCAL_LED_ITER++;
+      if(HCAL_LED_ITER>=flag_LED_NSTEPS) {
+        HCAL_LED_ITER=0;
+      }
+      HCAL_LED_PATT=flag_LED_PATT[HCAL_LED_ITER];
+      HCAL_LED_NPULSE=flag_LED_NPULSE[HCAL_LED_ITER];
+      printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
+        HCAL_LED_ITER,HCAL_LED_PATT,tiGetIntCount());
+      hcalClkIn(HCAL_LED_PATT);
+      hcalClkIn(HCAL_LED_PATT);   /* into both boards of one box */
+     /* printf("Re-enabling pulser\n");  */
+       hcalClkIn(69);  /* re-enable pulser (suspended during clock-in */
+       		   }
+    }
+ }else{
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE)
+    {
+      HCAL_LED_COUNT=0;
+      HCAL_LED_ITER++;
+      if(HCAL_LED_ITER>=flag_LED_NSTEPS) {
+        HCAL_LED_ITER=0;
+      }
+      HCAL_LED_PATT=flag_LED_PATT[HCAL_LED_ITER];
+      HCAL_LED_NPULSE=flag_LED_NPULSE[HCAL_LED_ITER];
+      printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
+        HCAL_LED_ITER,HCAL_LED_PATT,tiGetIntCount());
+      int idum;
+      for(idum=0;idum<16;idum++){hcalClkIn(HCAL_LED_PATT);}  /* Clock into all 16 boards */
+     /* printf("Re-enabling pulser\n");  */
+       hcalClkIn(69);  /* re-enable pulser (suspended during clock-in */
+    }
+ }
+}
 #endif
 
 #ifdef FADC_SCALERS
@@ -604,8 +731,18 @@ rocTrigger(int arg)
 }
 
 void
+rocLoad()
+{
+  dalmaInit(1);
+}
+
+void
 rocCleanup()
 {
+#ifdef TI_MASTER
+  tiResetSlaveConfig();
+#endif
+  dalmaClose();
 
 #ifdef ENABLE_FADC
   printf("%s: Reset all FADCs\n",__FUNCTION__);
@@ -638,20 +775,27 @@ void readUserFlags()
   }
   printf("\n");
 
+  /* VTP readout */
+  flag_VTP_readout = getint("vtp");
+  printf("vtp=%d: %s\n",
+	 flag_VTP_readout,
+	 (flag_VTP_readout) ? "VTP readout" : "VME readout");
+
 #ifdef ENABLE_HCAL_PULSER
   /* Read the hcal pulser step info */
   /* disable if prescale=-1 */
   if(flag_pulserTriggerInput >= 0 && flag_pulserTriggerInput <6) {
     flag_PULSER_ENABLED = flag_prescale[flag_pulserTriggerInput]+1;
     /*	  printf("flag_prescale[%d]=%d\n",flag_pulserTriggerInput,flag_prescale[flag_pulserTriggerInput]);  */
+    flag_MODE=getint("LED_pulser_MODE");
     if(flag_PULSER_ENABLED) {
       flag_LED_NSTEPS=getint("pulser_nsteps");
       char ptext[50];
       for(i = 0; i < flag_LED_NSTEPS; i++) {
         sprintf(ptext,"pulser_step%d",i);
-        flag_LED_STEP[i]  = getint(ptext);
+        flag_LED_PATT[i]  = getint(ptext);
         sprintf(ptext,"pulser_nstep%d",i);
-        flag_LED_NSTEP[i] = getint(ptext);
+        flag_LED_NPULSE[i] = getint(ptext);
       }
     }
   } else {
