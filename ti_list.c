@@ -240,7 +240,7 @@ rocTrigger(int arg)
   int dCnt;
 
   /* Set TI output 1 high for diagnostics */
-  tiSetOutputPort(1,0,0,0);
+  /*BQ  tiSetOutputPort(1,0,0,0);*/
 
   /* Readout the trigger block from the TI
      Trigger Block MUST be readout first */
@@ -264,7 +264,7 @@ rocTrigger(int arg)
   BANKCLOSE;
 
   /* Set TI output 0 low */
-  tiSetOutputPort(0,0,0,0);
+  /*BQ    tiSetOutputPort(0,0,0,0);*/
 
 }
 

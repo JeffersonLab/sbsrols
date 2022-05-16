@@ -525,16 +525,6 @@ rocEnd()
   faGDisable(0);
 #endif /* ENABLE_FADC */
 
-#ifdef ENABLE_F1
-  /* F1TDC Event status - Is all data read out */
-  f1GStatus(0);
-  int islot = 0;
-  for(islot = 0; islot<NF1TDC; islot++) {
-    F1_SLOT=f1ID[islot];
-    f1Reset(F1_SLOT,0);
-  }
-#endif /* End: ENABLE_F1 */
-
   DALMAGO;
 #ifdef ENABLE_FADC
   /* FADC Event status - Is all data read out */
@@ -546,6 +536,17 @@ rocEnd()
   tiStatus(1);
   sdStatus();
   DALMASTOP;
+
+#ifdef ENABLE_F1
+  /* F1TDC Event status - Is all data read out */
+  printf("%s: Resetting f1tdcs.", __func__);
+  int islot = 0;
+  for(islot = 0; islot<NF1TDC; islot++) {
+    F1_SLOT=f1ID[islot];
+    f1Reset(F1_SLOT,0);
+  }
+  f1GStatus(0);
+#endif /* End: ENABLE_F1 */
 
 #ifdef ENABLE_HCAL_PULSER
   /*BQ  hcalClkIn(0);  // Turn off LEDs at the end  */

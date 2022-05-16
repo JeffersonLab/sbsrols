@@ -85,9 +85,10 @@ int flag_prescale[NINPUTS];
 /* Flags for HCal pulser */
 int flag_pulserTriggerInput;
 int flag_LED_NSTEPS; /* Number of steps in sequence */
-int flag_LED_STEP[50]; /* Step LED configuration */
-int flag_LED_NSTEP[50]; /* Number of triggers in this step */
-
+int flag_LED_PATT[128]; /* Step's LED pattern configuration */
+int flag_LED_NPULSE[128]; /* Number of triggers in this step */
+int flag_MODE=0;  /* 0 normal; 1 one box at a time (usual running mode); 2 all boxes at once (pulser only mode)*/
+int jdum=0;  /* count 7 pairs of 0's after each value clocked in for MODE 1*/
 
 /* for the calculation of maximum data words in the block transfer */
 unsigned int MAXFADCWORDS=0;
@@ -110,8 +111,8 @@ struct timespec last_time;
 int flag_PULSER_ENABLED; /* Determined based on ps and nsteps */
 unsigned int HCAL_LED_COUNT = 0;
 unsigned int HCAL_LED_ITER=0;
-unsigned int HCAL_LED_C_STEP;
-unsigned int HCAL_LED_C_NSTEP;
+unsigned int HCAL_LED_PATT;
+unsigned int HCAL_LED_NPULSE;
 #endif
 
 int pulser_TRIG, cosmic_TRIG, hcal_sum_TRIG;
@@ -298,18 +299,19 @@ rocPrestart()
     HCAL_LED_COUNT=0;
     printf("HCAL Pulser sequence: ");
     for(i = 0 ; i < flag_LED_NSTEPS; i++) {
-      printf(" %d/%d",flag_LED_STEP[i],flag_LED_NSTEP[i]);
+      printf(" %d/%d",flag_LED_PATT[i],flag_LED_NPULSE[i]);
     }
     printf("\n");
     int idum;
     /* Clock in the first setting */
-    HCAL_LED_C_STEP = flag_LED_STEP[0];
-    HCAL_LED_C_NSTEP = flag_LED_NSTEP[0];
+    HCAL_LED_PATT = flag_LED_PATT[0];
+    HCAL_LED_NPULSE = flag_LED_NPULSE[0];
     for(idum=0;idum<14;idum++){hcalClkIn(0);}
-    hcalClkIn(HCAL_LED_C_STEP);
-    hcalClkIn(HCAL_LED_C_STEP);  /* into both boards of first box */
-      printf("Re-enabling pulser\n");
+    hcalClkIn(HCAL_LED_PATT);
+    hcalClkIn(HCAL_LED_PATT);  /* into both boards of first box */
+   /*   printf("Re-enabling pulser\n");*/
       hcalClkIn(69);  /* re-enable pulser (suspended during clock-in) */
+      if(flag_MODE==1)jdum=0;
   } else {
     int idum;
     printf("Pulser_enabled is *False*");
@@ -610,39 +612,83 @@ panel triggers and 2nd Hex digit is number of input
     }
 
 #ifdef ENABLE_HCAL_PULSER
-  if(flag_PULSER_ENABLED && pulser_TRIG) {
+  if(flag_PULSER_ENABLED && pulser_TRIG) 
+{
     HCAL_LED_COUNT++;
     BANKOPEN(BANK_HCAL_PULSER,BT_UI4,0);
     /**dma_dabufp++ = LSWAP(tiGetIntCount());*/
         *dma_dabufp++ = LSWAP(HCAL_LED_ITER);
-    *dma_dabufp++ = LSWAP(HCAL_LED_C_STEP);
+    *dma_dabufp++ = LSWAP(HCAL_LED_PATT);
     *dma_dabufp++ = LSWAP(HCAL_LED_COUNT);
-    *dma_dabufp++ = LSWAP((HCAL_LED_ITER<<22)|(HCAL_LED_C_STEP<<16)|HCAL_LED_COUNT);
+    *dma_dabufp++ = LSWAP((HCAL_LED_ITER<<22)|(HCAL_LED_PATT<<16)|HCAL_LED_COUNT);
+    int idum;
+    if(flag_MODE==0){idum=0;}else if(flag_MODE==1){idum=jdum+1;}else{idum=9;}
+    *dma_dabufp++ = LSWAP(idum);
     BANKCLOSE;
+
     /* Run the HCAL pulser clock-in code */
-    if(HCAL_LED_COUNT>=HCAL_LED_C_NSTEP) {
+ if(flag_MODE==0){
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE) 
+    {
       HCAL_LED_COUNT=0;
       HCAL_LED_ITER++;
       if(HCAL_LED_ITER>=flag_LED_NSTEPS) {
         HCAL_LED_ITER=0;
       }
-      HCAL_LED_C_STEP=flag_LED_STEP[HCAL_LED_ITER];
-      HCAL_LED_C_NSTEP=flag_LED_NSTEP[HCAL_LED_ITER];
+      HCAL_LED_PATT=flag_LED_PATT[HCAL_LED_ITER];
+      HCAL_LED_NPULSE=flag_LED_NPULSE[HCAL_LED_ITER];
       printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
-        HCAL_LED_ITER,HCAL_LED_C_STEP,tiGetIntCount());
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);   /* into both boards of one box */
-      printf("Re-enabling pulser\n");
+        HCAL_LED_ITER,HCAL_LED_PATT,tiGetIntCount());
+      hcalClkIn(HCAL_LED_PATT);
+      hcalClkIn(HCAL_LED_PATT);   /* into both boards of one box */
+     /* printf("Re-enabling pulser\n");  */
        hcalClkIn(69);  /* re-enable pulser (suspended during clock-in */
-      /*      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP);
-      hcalClkIn(HCAL_LED_C_STEP); */
     }
-  }
+ }else if(flag_MODE==1){
+/* mode 1, one box at a time, the usual running mode */
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE) 
+    {
+    if(jdum<7){jdum++;
+               HCAL_LED_COUNT=0;
+               hcalClkIn(0);
+               hcalClkIn(0);
+	       hcalClkIn(69);  /* move non-zero values along to next box.. and re-enable */
+              }else{
+      jdum=0;
+      HCAL_LED_COUNT=0;
+      HCAL_LED_ITER++;
+      if(HCAL_LED_ITER>=flag_LED_NSTEPS) {
+        HCAL_LED_ITER=0;
+      }
+      HCAL_LED_PATT=flag_LED_PATT[HCAL_LED_ITER];
+      HCAL_LED_NPULSE=flag_LED_NPULSE[HCAL_LED_ITER];
+      printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
+        HCAL_LED_ITER,HCAL_LED_PATT,tiGetIntCount());
+      hcalClkIn(HCAL_LED_PATT);
+      hcalClkIn(HCAL_LED_PATT);   /* into both boards of one box */
+     /* printf("Re-enabling pulser\n");  */
+       hcalClkIn(69);  /* re-enable pulser (suspended during clock-in */
+       		   }
+    }
+ }else{
+    if(HCAL_LED_COUNT>=HCAL_LED_NPULSE) 
+    {
+      HCAL_LED_COUNT=0;
+      HCAL_LED_ITER++;
+      if(HCAL_LED_ITER>=flag_LED_NSTEPS) {
+        HCAL_LED_ITER=0;
+      }
+      HCAL_LED_PATT=flag_LED_PATT[HCAL_LED_ITER];
+      HCAL_LED_NPULSE=flag_LED_NPULSE[HCAL_LED_ITER];
+      printf("Clocking in HCAL LED: %2d, %2d (tircount:%d)\n",
+        HCAL_LED_ITER,HCAL_LED_PATT,tiGetIntCount());
+      int idum;
+      for(idum=0;idum<16;idum++){hcalClkIn(HCAL_LED_PATT);}  /* Clock into all 16 boards */
+     /* printf("Re-enabling pulser\n");  */
+       hcalClkIn(69);  /* re-enable pulser (suspended during clock-in */
+    }
+ }
+}
 #endif
 
 #ifdef FADC_SCALERS
@@ -722,14 +768,15 @@ void readUserFlags()
   if(flag_pulserTriggerInput >= 0 && flag_pulserTriggerInput <6) {
     flag_PULSER_ENABLED = flag_prescale[flag_pulserTriggerInput]+1;
     /*	  printf("flag_prescale[%d]=%d\n",flag_pulserTriggerInput,flag_prescale[flag_pulserTriggerInput]);  */
+    flag_MODE=getint("LED_pulser_MODE");
     if(flag_PULSER_ENABLED) {
       flag_LED_NSTEPS=getint("pulser_nsteps");
       char ptext[50];
       for(i = 0; i < flag_LED_NSTEPS; i++) {
         sprintf(ptext,"pulser_step%d",i);
-        flag_LED_STEP[i]  = getint(ptext);
+        flag_LED_PATT[i]  = getint(ptext);
         sprintf(ptext,"pulser_nstep%d",i);
-        flag_LED_NSTEP[i] = getint(ptext);
+        flag_LED_NPULSE[i] = getint(ptext);
       }
     }
   } else {
