@@ -12,6 +12,8 @@
 #define POLLING___
 #define POLLING_MODE
 
+#define FPGA_MODE
+
 #include <rol.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -57,26 +59,34 @@ vtptinit(int code)
 {
   VTP_count = 0;
   VTP_prescale = 1;
-  /* vtpOpen(0xffff); */
+  vtpRocReset(0);    /* Reset the Hardware ROC - disables all data sources */
 }
 
 static void
 vtptenable(int code, int val)
 {
-  VTPflag = 1;
+  vtpRocEnable(val);   /* Enable specified ROC data sources */
+  if((val&2) == 0) {
+    VTPflag=0;   /* If no Synchronous event polling then disable the vtptest() routine */
+    printf("vtptenable: Disabling synchronous trigger polling\n");
+  }else{
+    VTPflag=1;
+    printf("vtptenable: Synchronous trigger polling enabled!!\n");
+  }
 }
 
 static void
 vtptdisable(int code, int val)
 {
   VTPflag = 0;
+  vtpRocEnable(5);    /* Disable the Synchronous data source */
 }
 
 static void
 vtptack(int code, unsigned int intMask)
 {
-  if(code == 0)
-    vtpTiAck();
+  /* if(code == 0)
+     vtpTiAck(); */
 }
 
 static unsigned int
@@ -92,28 +102,21 @@ vtpttest(int code)
 
   if(VTPflag)
     {
-      val = vtpBReady();
+      //val = vtpBReady();
+      val = vtpRocPoll();   // Returns the number of triggers currently needed to be acknowledged
 
       if(val > 0)
 	{
-#ifdef GETSYNCFLAG
-	  syncFlag = vtpGetSyncEventFlag();
-#else
-	  syncFlag = 0;
-#endif
+	  syncFlag = 0; /* No way to get Sync information yet */
 	  return(1);
-	}
-      else
-	{
+	} else {
 	  /*usleep(1000);*/
 	  syncFlag = 0;
 	  return(0);
 	}
 
       return(0);
-    }
-  else
-    {
+    } else {
       return(0);
     }
 
@@ -141,7 +144,8 @@ __download()
 {
   daLogMsg("INFO", "Readout list compiled %s", DAYTIME);
   rol->poll = 1;
-  *(rol->async_roc) = 0;	/* Normal ROC */
+  *(rol->async_roc) = 1;	/* Async ROC - do not send control events via the software ROC*/
+  daLogMsg("INFO", "Async ROC mode - No software Control Events will be sent to EB\n");
   {				/* begin user */
 
     daLogMsg("INFO", "******* Entering User Download *******\n");
@@ -167,8 +171,6 @@ __prestart()
     daLogMsg("INFO", "******* User Prestart Executed *******");
 
   }				/* end user */
-  if(__the_event__)
-    WRITE_EVENT_;
   *(rol->nevents) = 0;
   rol->recNb = 0;
 }				/*end prestart */
@@ -183,8 +185,6 @@ __end()
     daLogMsg("INFO", "******* User End Executed *******");
 
   }				/* end user */
-  if(__the_event__)
-    WRITE_EVENT_;
 }				/* end end block */
 
 static void
@@ -196,8 +196,6 @@ __pause()
     rocPause();
     daLogMsg("INFO", "******* User Pause Executed *******");
   }				/* end user */
-  if(__the_event__)
-    WRITE_EVENT_;
 }				/*end pause */
 
 static void
@@ -209,8 +207,6 @@ __go()
     rocGo();
     daLogMsg("INFO", "******* User Go Executed *******");
   }				/* end user */
-  if(__the_event__)
-    WRITE_EVENT_;
 }
 
 void

@@ -56,7 +56,7 @@ rocDownload()
 
   int stat;
   char buf[1000];
-  const char *fwpath="/home/sbs-onl/vtp/vtp/firmware";
+  const char *fwpath="/home/sbs-onl/vtp/firmware";
   const char *z7file="fe_vtp_vxs_readout_z7_nov16.bin";
   const char *v7file="fe_vtp_vxs_readout_v7_aug8.bin";
 
@@ -84,7 +84,7 @@ rocDownload()
     return;
   }
 
-
+#ifdef SKIPPY
   /* FIXME: For MPD, we got this from the config file
      Get ROC Output network info from VTP */
   stat = vtpRocReadNetFile(0);
@@ -99,6 +99,7 @@ rocDownload()
     printf("   MAC1 =   0x%08x 0x%08x\n", VTP_NET_OUT.mac[0][0], VTP_NET_OUT.mac[1][0]);
     printf("\n");
   }
+#endif
 
  /* print some connection info from the ROC */
   printf(" **Info from ROC Connection Structure**\n");
@@ -108,7 +109,6 @@ rocDownload()
   printf("   EMU port = %d\n", rol->rlinkP->port);
 
   /* Configure the ROC*/
-  /*  *(rol->async_roc) = 1; */  // don't send Control events to the EB (Set in VTP_source.h)
   vtpRocReset(0);
   printf(" Set ROC ID = %d \n",ROCID);
   vtpRocConfig(ROCID, 0, 64, 0);  /* Use defaults for other parameters MaxRecSize, Max#Blocks, Timeout*/
@@ -213,20 +213,18 @@ rocPrestart()
 
 
 
-  /* FIXME: Need to get the active vme slots, convert to payload port, build to bank 1 */
-  uint32_t vmemask = (0xff << 3); /* slots 3 - 10 */
-  vmemask |= (0xff << 12); /* slots 12 - 20 */
+  // Trigger Payload Mask populated fron config file bits VTP_PAYLOAD_EN
+  int conf_ppmask = vtpRocGetPPEnableMask();
 
-  uint32_t ivme;
-  for(ivme = 3; ivme < 22; ivme++)
+  uint32_t ipp;
+  for(ipp = 0; ipp < 16; ipp++)
     {
-      if(vmemask & (1 << ivme))
+      if(conf_ppmask & (1<<ipp))
 	{
-	  uint32_t payloadport = vmeSlot2vxsPayloadPort(ivme);
-	     /* Configure payloadport with FADC250 */
 	  printf("Configure VME slot %2d (payload port %2d) with FADC250\n",
-		 ivme, payloadport);
-	  ppmask |= vtpPayloadConfig(payloadport, ppInfo, 1, 1, 0x1);
+		 vxsPayloadPort2vmeSlot(ipp+1), ipp+1);
+	  ppmask |= vtpPayloadConfig(ipp+1, ppInfo, 1, 1, 0x1);
+
 	}
     }
 
@@ -250,7 +248,8 @@ rocPrestart()
 
 
   /* Print Run Number and Run Type */
-  printf(" Run Number = %d, Run Type = %d \n",rol->runNumber,rol->runType);
+  printf("%s: Send Prestart Event, Control = 0x%x Run Number = %d, Run Type = %d \n",
+	 __func__, EV_PRESTART, rol->runNumber,rol->runType);
 
   /*Send Prestart Event*/
   status = vtpRocEvioWriteControl(EV_PRESTART,rol->runNumber,rol->runType);
