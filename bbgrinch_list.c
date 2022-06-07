@@ -111,6 +111,16 @@ unsigned int MAXFADCWORDS=0;
 
 #include <time.h> /* CARLOS STUFF FOR DEBUGGING PURPOSES */
 
+#if FADC_SCALERS || VETROC_SCALERS
+// Define these in the Makefile to include scaler banks in data steam
+//#define FADC_SCALER_BANKS
+//#define VETROC_SCALER_BANKS
+int scaler_period=2;
+struct timespec last_time;
+#include "../scaler_server/scale32LibNew.c"
+#include "../scaler_server/linuxScalerLib.c"
+#endif
+
 /*
   Global to configure the trigger source
       0 : tsinputs
@@ -227,6 +237,16 @@ rocDownload()
   vetrocGStatus(0);
 #endif
   // tiSetBusySource(0x3,0);
+
+#if FADC_SCALERS || VETROC_SCALERS
+  if(fadcscaler_init_crl()) {
+    printf("Scalers initialized\n");
+  } else {
+    printf("Failed to initialize scalers\n");
+  }
+  set_runstatus(0);
+#endif
+  
   tiStatus(0);
 
   printf("rocDownload: User Download Executed\n");
@@ -240,6 +260,12 @@ rocPrestart()
 {
   int ivt,ifa;
   unsigned short vtflag;
+
+#if FADC_SCALERS || VETROC_SCALERS
+  /* Suspend scaler task */
+  set_runstatus(1);
+  clock_gettime(CLOCK_REALTIME, &last_time);
+#endif
 
 #ifdef USE_FADC
  /*****************
@@ -483,6 +509,14 @@ rocGo()
   tiSetBlockLimit(0);
 
   tiStatus(1);
+
+#if FADC_SCALERS || VETROC_SCALERS
+  /* Clear and enable FADC scalers */
+  set_runstatus(1);
+  printf("fadc/vetroc scalers cleared\n");
+  enable_scalers();
+#endif
+
 }
 
 /****************************************
@@ -534,6 +568,12 @@ rocEnd()
   sdStatus(0);
   tiStatus(0);
   DALMASTOP;
+
+#if FADC_SCALERS || VETROC_SCALERS  
+  /* Resume stand alone scaler server */
+  disable_scalers();
+  set_runstatus(0);		/* Tell Stand alone scaler task to resume  */
+#endif
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -779,6 +819,35 @@ rocTrigger(int arg)
 	}
 #endif /* USE_VETROC */
     }
+
+#if FADC_SCALERS || VETROC_SCALERS
+  if (scaler_period > 0) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    if((scaler_period>0 &&
+	((now.tv_sec - last_time.tv_sec
+	  + ((double)now.tv_nsec - (double)last_time.tv_nsec)/1000000000L) >= scaler_period))) {
+#ifdef FADC_SCALER_BANKS
+      BANKOPEN(9250,BT_UI4,0);
+      read_fadc_scalers(&dma_dabufp,0);
+      BANKCLOSE;
+      BANKOPEN(9001,BT_UI4,syncFlag);
+      read_ti_scalers(&dma_dabufp,0);
+      BANKCLOSE;
+#else
+      read_fadc_scalers(0,0);
+      read_ti_scalers(0,0);
+#endif
+#ifdef VETROC_SCALER_BANKS
+      BANKOPEN(5452,BT_UI4,0);
+      read_vetroc_scalers(&dma_dabufp,0);
+      BANKCLOSE;
+#endif      
+      last_time = now;
+      read_clock_channels();
+    }
+  }
+#endif
 
   /* Set TI output 0 low */
   // tiSetOutputPort(0,0,0,0);

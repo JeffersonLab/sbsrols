@@ -18,7 +18,8 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= bbgrinch_list.so bbgrinch_slave_list.so ti_list.so ti_slave_list.so
+VMEROL			= bbgrinch_list.so bbgrinch_slave_list.so ti_list.so ti_slave_list.so \
+	bbgrinch_scalers_list.so bbgrinch_scalers_slave_list.so
 # Add shared library dependencies here.  (jvme, ti, are already included)
 ROLLIBS			= -lvetroc -lc792 -lsd -lts -lfadc -ldalmaRol
 
@@ -92,6 +93,23 @@ test_list_v3.so: test_list_v3.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+%scalers_list.so: %list.c #../scaler_server/shmLib.o ../scaler_server/linuxScalerLib.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
+	-DTI_MASTER -DINIT_NAME=$(@:.so=__init) \
+	-DINIT_NAME_POLL=$(@:.so=__poll) -DVETROC_SCALERS -DVETROC_SCALER_BANKS \
+	../scaler_server/shmLib.o ../scaler_server/vmeDSClib.o \
+	../scaler_server/sis3820Lib.o -o $@ $<
+
+%scalers_slave_list.so: %list.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
+	-DTI_SLAVE -DINIT_NAME=$(@:.so=__init) \
+	-DINIT_NAME_POLL=$(@:.so=__poll) -DVETROC_SCALERS -DVETROC_SCALER_BANKS \
+	../scaler_server/shmLib.o ../scaler_server/vmeDSClib.o \
+	../scaler_server/sis3820Lib.o -o $@ $<
+
 
 clean distclean:
 	${Q}rm -f  $(VMEROL) $(SOBJS) $(CFILES) *~ $(DEPS) $(DEPS) *.d.*
