@@ -16,8 +16,8 @@
 #define BUFFERLEVEL 1
 
 /* Event Buffer definitions */
-#define MAX_EVENT_LENGTH 5*10240 /* in Bytes */
-#define MAX_EVENT_POOL   400   /* in number of events */
+#define MAX_EVENT_LENGTH 20*10240 /* in Bytes */
+#define MAX_EVENT_POOL   200   /* in number of events */
 
 /* TI_MASTER / TI_SLAVE defined in Makefile */
 
@@ -57,7 +57,7 @@ static unsigned int sdScanMask = 0;
 #include "vetrocLib.h"      /* VETROC library */
 #include "vetrocConfig.h"
 #define USE_VETROC
-#define MAXVETROCDATA 1200*BLOCKLEVEL
+#define MAXVETROCDATA 2300*BLOCKLEVEL
 #define VETROC_SLOT 3				/* slot of first vetroc */
 #define VETROC_SLOT_INCR 1			/* slot increment */
 #define NVETROC	4								/* number of vetrocs used */
@@ -394,6 +394,8 @@ rocPrestart()
 void
 rocGo()
 {
+  tiSetOutputPort(0,1,0,0);
+
   /* Print out the Run Number and Run Type (config id) */
   printf("rocGo: Activating Run Number %d, Config id = %d\n",
 	 rol->runNumber,rol->runType);
@@ -550,7 +552,7 @@ rocTrigger(int arg)
   unsigned int datascan, scanmask, roCount;
 
   /* Set TI output 1 high for diagnostics */
-  tiSetOutputPort(1,0,0,0);
+  // tiSetOutputPort(1,0,0,0);
 
   roCount = tiGetIntCount(); //Get the TI trigger count
 
@@ -779,7 +781,7 @@ rocTrigger(int arg)
     }
 
   /* Set TI output 0 low */
-  tiSetOutputPort(0,0,0,0);
+  // tiSetOutputPort(0,0,0,0);
 
 }
 
