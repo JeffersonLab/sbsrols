@@ -124,9 +124,11 @@ vtp_mpd_setup()
   /* Index is the mpd / fiber... value mask if ADCs with APV config errors */
   uint32_t apvConfigErrorMask[32];
   uint32_t apvErrorTypeMask[32]; /* 0 : mpd init, 1: apv not found , 2: config */
+  uint32_t configAdcMask[32]; /* ADC channels that are configured in cfg file */
 
   memset(apvConfigErrorMask, 0 , sizeof(apvConfigErrorMask));
   memset(apvErrorTypeMask, 0 , sizeof(apvErrorTypeMask));
+  memset(configAdcMask, 0 , sizeof(configAdcMask));
 
   mpdSetPrintDebug(0);
 
@@ -287,10 +289,10 @@ vtp_mpd_setup()
   //END of MPD configure
 
   // summary report
-  bufp = (char *) &(apvbuffer[0]);
+			  bufp = (char *) &(apvbuffer[0]);
 
-  rval = sprintf(bufp, "\n");
-  if(rval > 0)
+			  rval = sprintf(bufp, "\n");
+			  if(rval > 0)
     bufp += rval;
   rval = sprintf(bufp, "Configured APVs (ADC 15 ... 0)            --------------------ERRORS------------------\n");
   if(rval > 0)
@@ -308,13 +310,12 @@ vtp_mpd_setup()
 
 
       /* Build the ADCmask of those in the config file */
-      uint32_t configAdcMask = 0;
       for (iapv = 0; iapv < mpdGetNumberAPV(id); iapv++)
 	{
 	  if(mpdApvGetAdc(id,iapv) > -1)
 	    {
-	      configAdcMask |= (1 << mpdApvGetAdc(id,iapv));
-	      apvErrorTypeMask[ifiber] |= (1 << 1);
+	      configAdcMask[id] |= (1 << mpdApvGetAdc(id,iapv));
+	      apvErrorTypeMask[ifiber] = 0;
 	    }
 	}
 
@@ -349,8 +350,9 @@ vtp_mpd_setup()
 		    bufp += rval;
 		  iapv++;
 		}
-	      else if(configAdcMask & (1 << ibit))
+	      else if(configAdcMask[id] & (1 << ibit))
 		{
+		  apvErrorTypeMask[id] |= (1 << 1);
 		  rval = sprintf(bufp, "E");
 		  errSlotMask |= (1 << id);
 		  if(rval > 0)
@@ -443,7 +445,7 @@ vtp_mpd_setup()
 
 	  fprintf(rejectFile, "  MPD %2d : ", id);
 
-	  int ibit, enabledBits = 0, disabledBits = 0;;
+	  int ibit, enabledBits = 0, disabledBits = 0, missingBits = 0;
 	  for (ibit = 15; ibit >= 0; ibit--)
 	    {
 	      if (((ibit + 1) % 4) == 0)
@@ -464,13 +466,18 @@ vtp_mpd_setup()
 		    }
 		  iapv++;
 		}
+	      else if(configAdcMask[id] & (1 << ibit))
+		{
+		  fprintf(rejectFile, "E");
+		  missingBits++;
+		}
 	      else
 		{
 		  fprintf(rejectFile, ".");
 		}
 	    }
-	  fprintf(rejectFile, " (Total: %2d   Disabled: %2d)\n",
-		  enabledBits, disabledBits);
+	  fprintf(rejectFile, " (Total: %2d   Disabled: %2d   NotFound: %2d)\n",
+		  enabledBits+missingBits, disabledBits, missingBits);
 
 	  daLogMsg("ERROR",
 		   "MPD %d: %d APVs Disabled - configuration error",
@@ -636,22 +643,25 @@ vtp_mpd_setup()
 	      continue;
 	    }
 
-
 	  n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
-
-	  // if settings are for us
-	  if(cModeRocId != ROCID)
-	    {
-	      printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
-	      continue;
-	    }
 
 	  if(n == 3)
 	    {
-	      //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
-	      vtpMpdSetApvOffset(fiberID, apvId, stripNo, (int)ped_offset);
-	      vtpMpdSetApvThreshold(fiberID, apvId, stripNo, (int)(pedestal_factor*ped_rms));
+	      // if settings are for us
+   	      if(cModeRocId == ROCID)
+	      {
+	        //            printf(" fiberID: %2d, apvId %2d, stripNo: %3d, ped_offset: %4.0f ped_rms: %4.0f \n", fiberID, apvId, stripNo, ped_offset, ped_rms);
+	        vtpMpdSetApvOffset(fiberID, apvId, stripNo, (int)ped_offset);
+	        vtpMpdSetApvThreshold(fiberID, apvId, stripNo, (int)(pedestal_factor*ped_rms));
+	      }
+              else
+              {
+                printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+                continue;
+              }
 	    }
+//          else
+//            printf("VTP PED: skipping line: %s\n", line_ptr);
 	}
       fclose(fpedestal);
     }
@@ -661,23 +671,29 @@ vtp_mpd_setup()
     printf("no commonMode file\n");
   }else{
     printf("trying to read commonMode\n");
-    while(fscanf(fcommon, "%d %d %d %d %d %d", &cModeRocId, &cModeSlot, &fiberID, &apvId, &cModeMin, &cModeMax)==6)
+    while(!feof(fcommon))
       {
-	/* printf("fiberID %d %d %d %d %d %d \n", cModeRocId, cModeSlot, fiberID, apvId, cModeMin, cModeMax); */
+        getline(&line_ptr, &line_len, fcommon);
+        if(sscanf(line_ptr, "%d %d %d %d %d %d", &cModeRocId, &cModeSlot, &fiberID, &apvId, &cModeMin, &cModeMax)==6)
+        {
+          /* printf("fiberID %d %d %d %d %d %d \n", cModeRocId, cModeSlot, fiberID, apvId, cModeMin, cModeMax); */
 
-	//	  cModeMin = 200;
-	//	  cModeMax = 800;
-	//	  cModeMin = 0;
-	//	  cModeMax = 4095;
+  	  //	  cModeMin = 200;
+	  //	  cModeMax = 800;
+	  //	  cModeMin = 0;
+	  //	  cModeMax = 4095;
 
-	// if settings are for us
-	if(cModeRocId != ROCID)
+	  // if settings are for us
+	  if(cModeRocId != ROCID)
 	  {
 	    printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
 	    continue;
 	  }
 
-	vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
+	  vtpMpdSetAvg(fiberID, apvId, cModeMin, cModeMax);
+        }
+//        else
+//          printf("VTP CM: skipping line: %s\n", line_ptr);
       }
     fclose(fcommon);
   }
