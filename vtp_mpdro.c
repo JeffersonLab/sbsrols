@@ -289,10 +289,10 @@ vtp_mpd_setup()
   //END of MPD configure
 
   // summary report
-			  bufp = (char *) &(apvbuffer[0]);
+  bufp = (char *) &(apvbuffer[0]);
 
-			  rval = sprintf(bufp, "\n");
-			  if(rval > 0)
+  rval = sprintf(bufp, "\n");
+  if(rval > 0)
     bufp += rval;
   rval = sprintf(bufp, "Configured APVs (ADC 15 ... 0)            --------------------ERRORS------------------\n");
   if(rval > 0)
@@ -479,10 +479,9 @@ vtp_mpd_setup()
 	  fprintf(rejectFile, " (Total: %2d   Disabled: %2d   NotFound: %2d)\n",
 		  enabledBits+missingBits, disabledBits, missingBits);
 
-	  daLogMsg("ERROR",
-		   "MPD %d: %d APVs Disabled - configuration error",
-		   id, disabledBits);/* Clear the apv enabled mask */
-	  mpdResetApvEnableMask(id);
+	  daLogMsg("ERROR", "MPD %d: %d APVs Disabled",
+		   id, disabledBits+missingBits);
+	  mpdResetApvEnableMask(id); /* Clear the apv enabled mask */
 
 	  /* Write the updated mask */
 	  mpdSetApvEnableMask(id, updated_mask);
