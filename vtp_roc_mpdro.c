@@ -54,7 +54,7 @@ char VTP_CONFIG_FILENAME[250];
 
 /* default config filenames, if they are not defined in COOL */
 #define DEFAULT_APV_CONFIG "/home/sbs-onl/cfg/vtp_config_TS.cfg"
-#define DEFAULT_VTP_CONFIG "/home/sbs-onl/vtp/cfg/sbsvtp3.config"
+#define DEFAULT_VTP_CONFIG "/home/sbs-onl/vtp/cfg/sbsvtp2.config"
 #define APV_TEMP_CONFIG "/tmp/vtp_out.cfg"
 
 
@@ -157,8 +157,13 @@ rocPrestart()
   vtpTiLinkInit();
 
   /* Write in the Destination IP and port obtained from platform */
-  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
+//  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
+//  hacked for now since there is only 1 rol->rlinkP->net value supported by the platform, but we need two since we are using two different NICs
+  if(ROCID==2) emuip = vtpRoc_inet_addr("192.168.2.1");
+  if(ROCID==4) emuip = vtpRoc_inet_addr("192.168.1.1");
+  
   emuport = rol->rlinkP->port;
+//  emuport = 7001; // for testing w/ netcat
   daLogMsg("INFO"," EMU IP = 0x%08x  Port= %d\n",emuip, emuport);
 
    /* Readback the VTP 10Gig network registers and connect */
@@ -171,6 +176,14 @@ rocPrestart()
 
   /*Read it back to to make sure */
   vtpRocGetTcpCfg(ipaddr, subnet, gateway, mac, destipaddr, &destipport);
+
+  /* If the ipaddr is all zero's, then the config file was not loaded */
+  if(ipaddr[0] == 0)
+    {
+      daLogMsg("ERROR", "Invalid Network Settings.  Check VTP Configuration File");
+      ROL_SET_ERROR;
+      return;
+    }
 
   /* Set the emu ip and port */
   vtpRocSetTcpCfg(ipaddr, subnet, gateway, mac, emuip, emuport);
@@ -194,31 +207,33 @@ rocPrestart()
   memset(ppInfo, 0, sizeof(ppInfo));
 
   /* The fibermask from vtp_mpdro.c */
-  uint32_t fibermask = mpdGetVTPFiberMask();
+  uint64_t fibermask = mpdGetVTPFiberMask();
   uint32_t lanemask = 0, payloadport = 0;
   uint32_t bankmask = 0;
   int ppmask=0;
 
-  int iquad, ifiber, bankid = 1;
+  uint64_t iquad;
+  int ifiber, slot, bankid = 1;
 
-  for(iquad = 0; iquad < 8; iquad++)
+  for(iquad = 0; iquad < (VTP_MPD_MAX+3)/4; iquad++)
     {
-      if(fibermask & (0xF << (iquad*4)))
+      if(fibermask & ((unsigned long long)0xF << (iquad*4)))
 	{
 	  /* e.g. 0 quad -> fiber 0-3 -> VME slot 3 */
 	  /* ... convert to payload port */
-	  payloadport = vmeSlot2vxsPayloadPort(iquad + 3);
+          slot = (iquad<8) ? (iquad+3) : (iquad+5);
+	  payloadport = vmeSlot2vxsPayloadPort(slot);
 
 	  bankmask = 0;
 	  for(ifiber = 0; ifiber < 4; ifiber++)
 	    {
-	      if( (fibermask >> (iquad * 4) ) & (1 << ifiber))
+	      if( (fibermask >> (iquad * 4ull) ) & (1 << ifiber))
 		bankmask |= (bankid << (ifiber * 8));
 	    }
 
 	  /* Configure payloadport with MPD in lanes */
 	  printf("Configure VME slot %2d (payload port %2d) with MPD bankmask 0x%08x\n",
-		 iquad+3, payloadport, bankmask);
+		 slot, payloadport, bankmask);
 	  ppmask |= vtpPayloadConfig(payloadport, ppInfo, 2,
 			   0, bankmask);
 	}
@@ -255,7 +270,7 @@ rocPrestart()
 
   /* Insert Config Files into User Event 137 */
   /* Pointer gymnastics ahead. */
-#define UEVENT137
+//#define UEVENT137
 #ifdef UEVENT137
   uint32_t *ueBuffer; /* User event buffer */
   int maxsize = 3 * 1024 * 1024;
@@ -463,6 +478,8 @@ rocTrigger_done()
 void
 rocReset()
 {
+  rocStatus();
+
   daLogMsg("INFO","Call vtpMpdReset");
   vtpMpdReset();
 
