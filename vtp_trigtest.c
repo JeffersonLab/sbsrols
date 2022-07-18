@@ -70,13 +70,12 @@ rocDownload()
     }
 
 
-  /* ltm4676_print_status(); */
-
   if(vtpInit(VTP_INIT_CLK_VXS_250))
-  {
-    printf("vtpInit() **FAILED**. User should not continue.\n");
-    return;
-  }
+    {
+      printf("vtpInit() **FAILED**. User should not continue.\n");
+      return;
+    }
+
 
  /* print some connection info from the ROC */
   printf(" **Info from ROC Connection Structure**\n");
