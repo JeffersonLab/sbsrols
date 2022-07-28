@@ -442,7 +442,7 @@ vtp_mpd_setup()
 	  /* Remove the broken bits */
 	  uint32_t updated_mask = current_mask & ~apvConfigErrorMask[id];
 
-	  fprintf(rejectFile, "  MPD %2d : ", id);
+	  fprintf(rejectFile, "  MPD %2d : ", (int)id);
 
 	  int ibit, enabledBits = 0, disabledBits = 0, missingBits = 0;
 	  for (ibit = 15; ibit >= 0; ibit--)
