@@ -67,7 +67,7 @@ vtpGetApvRejectMode(int32_t pflag)
   return apvRejectMode;
 }
 
-char *apvbuffer;
+char *apvbuffer = NULL;
 char *bufp;
 
 
@@ -78,28 +78,30 @@ vtp_mpd_setup()
    *   VTP SETUP
    *****************/
   int iFlag = 0;
-  int vtpFiberBit = 0;
-  uint32_t vtpFiberMaskToInit;
+  uint64_t vtpFiberBit = 0;
+  uint64_t vtpFiberMaskToInit;
 
 
   if(vtpMpdConfigInit(rol->usrConfig) == ERROR)
     {
-      printf("%s: Error using rol->usrConfig %s.\n",
-	     __func__, rol->usrConfig);
+      daLogMsg("ERROR","APV Configuration load error for %s (CHECK THIS FIRST)\n",
+	       rol->usrConfig);
 
+      ROL_SET_ERROR;
+      return;
+#ifdef TRY_DEFAULT_APV_CONFIG
       printf("  trying %s\n",
 	     DEFAULT_APV_CONFIG);
 
       if(vtpMpdConfigInit(DEFAULT_APV_CONFIG) == ERROR)
 	{
 	  daLogMsg("ERROR","Error loading APV configuration file");
-
-	  return;
 	}
       else
 	{
 	  strncpy(APV_CONFIG_FILENAME, DEFAULT_APV_CONFIG, 250);
 	}
+#endif
     }
   else
     {
@@ -109,10 +111,10 @@ vtp_mpd_setup()
   vtpMpdConfigLoad();
 
   vtpMpdFiberReset();
-  vtpMpdFiberLinkReset(0xffffffff);
+  vtpMpdFiberLinkReset(0xffffffffffffffff);
 
   /* ... the VTP holds all the MPD event build stuff in reset... */
-  vtpMpdDisable(0xffffffff);
+  vtpMpdDisable(0xffffffffffffffff);
 
   /* setups up the MPD (so they clear their buffers) ... */
 
@@ -120,12 +122,11 @@ vtp_mpd_setup()
    *   MPD SETUP
    *****************/
   int rval = OK;
-  unsigned int errSlotMask = 0;
+  uint64_t errSlotMask = 0;
   /* Index is the mpd / fiber... value mask if ADCs with APV config errors */
-  uint32_t apvConfigErrorMask[32];
-  uint32_t apvErrorTypeMask[32]; /* 0 : mpd init, 1: apv not found , 2: config */
-  uint32_t configAdcMask[32]; /* ADC channels that are configured in cfg file */
-
+  uint32_t apvConfigErrorMask[VTP_MPD_MAX];
+  uint32_t apvErrorTypeMask[VTP_MPD_MAX]; /* 0 : mpd init, 1: apv not found , 2: config */
+  uint32_t configAdcMask[VTP_MPD_MAX]; /* ADC channels that are configured in cfg file */
   memset(apvConfigErrorMask, 0 , sizeof(apvConfigErrorMask));
   memset(apvErrorTypeMask, 0 , sizeof(apvErrorTypeMask));
   memset(configAdcMask, 0 , sizeof(configAdcMask));
@@ -136,17 +137,14 @@ vtp_mpd_setup()
 
   // In VTP mode, par1(fiber mask) and par3(number of mpds) are not used in mpdInit(par1, par2, par3, par4)
   // Instead, they come from the configuration file
-  unsigned int chanmask = vtpMpdGetChanUpMask();
+  uint64_t chanmask = vtpMpdGetChanUpMask();
 
   chanmask = mpdGetVTPFiberMask();
   mpdInitVTP(chanmask, MPD_INIT_FIBER_MODE | MPD_INIT_NO_CONFIG_FILE_CHECK);
   fnMPD = mpdGetNumberMPD();
 
-
-  //fnMPD = 1;
-  if (fnMPD<=0) { // test all possible vme slot ?
-    printf("ERR: no MPD discovered, cannot continue\n");
-    return;
+  if (fnMPD<=0) {
+    daLogMsg("WARN","no MPD enabled in config file\n");
   }
 
   printf(" MPD discovered = %d\n",fnMPD);
@@ -179,7 +177,7 @@ vtp_mpd_setup()
     if( try_cnt == 3 )
       {
 	printf("APV blind scan failed for %d TIMES !!!!\n\n", try_cnt);
-	errSlotMask |= (1 << i);
+	errSlotMask |= (1ull << (uint64_t)i);
 	continue;
       }
 
@@ -189,7 +187,7 @@ vtp_mpd_setup()
       {
 	printf(" * * FAILED\n");
 	error_status = ERROR;
-	errSlotMask |= (1 << i);
+	errSlotMask |= (1ull << (uint64_t)i);
       }
 
     usleep(10);
@@ -270,7 +268,7 @@ vtp_mpd_setup()
     error_status |= saveError;
 
     if(error_status == ERROR)
-      errSlotMask |= (1 << i);
+      errSlotMask |= (1ull << (uint64_t)i);
 
     // configure adc on MPD
     printf("Configure ADC on MPD slot %d\n",i);
@@ -284,7 +282,7 @@ vtp_mpd_setup()
     mpdAPV_Reset101(i);
 
     // <- MPD+APV initialization ends here
-    sleep(1);
+//    sleep(1);
   } // end loop on mpds
   //END of MPD configure
 
@@ -299,13 +297,14 @@ vtp_mpd_setup()
     bufp += rval;
 
   int ibit;
-  int ifiber, id, iapv;
-  for (ifiber = 0; ifiber < 32; ifiber++)
+  int ifiber, iapv;
+  uint64_t id;
+  for (ifiber = 0; ifiber < VTP_MPD_MAX; ifiber++)
     {
 
       id = ifiber;
 
-      if( ((1 << id) & mpdGetVTPFiberMask()) == 0)
+      if( ((1ull << id) & mpdGetVTPFiberMask()) == 0)
 	continue;
 
 
@@ -324,7 +323,7 @@ vtp_mpd_setup()
 
       /* if (mpdGetApvEnableMask(id) != 0) */
 	{
-	  rval = sprintf(bufp, "  MPD %2d : ", id);
+	  rval = sprintf(bufp, "  MPD %2d : ", (int)id);
 	  if(rval > 0)
 	    bufp += rval;
 	  iapv = 0;
@@ -354,7 +353,7 @@ vtp_mpd_setup()
 		{
 		  apvErrorTypeMask[id] |= (1 << 1);
 		  rval = sprintf(bufp, "E");
-		  errSlotMask |= (1 << id);
+		  errSlotMask |= (1ull << id);
 		  if(rval > 0)
 		    bufp += rval;
 		}
@@ -368,7 +367,7 @@ vtp_mpd_setup()
 	  rval = sprintf(bufp, " (#APV %2d)", iapv);
 	  if(rval > 0)
 	    bufp += rval;
-	  if(errSlotMask & (1 << id))
+	  if(errSlotMask & (1ull << id))
 	    {
 	      rval = sprintf(bufp, " %s  %s  %s\n",
 			     (apvErrorTypeMask[id] & 0x1) ? "*MPD NotFound*" :
@@ -409,7 +408,7 @@ vtp_mpd_setup()
       printf("Reject Mode enabled\n");
       FILE *rejectFile = NULL;
 
-      for(id = 0; id < 32; id++)
+      for(id = 0; id < VTP_MPD_MAX; id++)
 	{
 	  /* Skip  the MPD with unbroken APV */
 	  if(apvConfigErrorMask[id] == 0)
@@ -443,7 +442,7 @@ vtp_mpd_setup()
 	  /* Remove the broken bits */
 	  uint32_t updated_mask = current_mask & ~apvConfigErrorMask[id];
 
-	  fprintf(rejectFile, "  MPD %2d : ", id);
+	  fprintf(rejectFile, "  MPD %2d : ", (int)id);
 
 	  int ibit, enabledBits = 0, disabledBits = 0, missingBits = 0;
 	  for (ibit = 15; ibit >= 0; ibit--)
@@ -500,12 +499,12 @@ vtp_mpd_setup()
 
   /* ...then VTP can enable the MPD event building,  */
   vtpFiberMaskToInit = mpdGetVTPFiberMask();
-  printf("VTP fiber mask: 0x%08x\n", vtpFiberMaskToInit);
+  printf("VTP fiber mask: 0x%16llx\n", vtpFiberMaskToInit);
 
   while(vtpFiberMaskToInit != 0){
     if((vtpFiberMaskToInit & 0x1) == 1)
-      vtpMpdEnable( 0x1 << vtpFiberBit);
-    vtpFiberMaskToInit = vtpFiberMaskToInit >> 1;
+      vtpMpdEnable( 0x1ull << vtpFiberBit);
+    vtpFiberMaskToInit = vtpFiberMaskToInit >> 1ull;
     ++vtpFiberBit;
   }
 
@@ -535,6 +534,7 @@ vtp_mpd_setup()
       if(vtpConfig(DEFAULT_VTP_CONFIG) == ERROR)
 	{
 	  daLogMsg("ERROR","Error loading VTP configuration file");
+	  ROL_SET_ERROR;
 	  return;
 	}
       else
@@ -613,7 +613,7 @@ vtp_mpd_setup()
 		       enable_cm, noprocessing_prescale,
 		       allow_peak_any_time, min_avg_samples);
 
-      for(fiberID=0; fiberID<16; fiberID++)
+      for(fiberID=0; fiberID<VTP_MPD_MAX; fiberID++)
 	{
 	  for(apvId=0; apvId<15; apvId++)
 	    {
@@ -643,6 +643,13 @@ vtp_mpd_setup()
 	    }
 
 	  n = sscanf(line_ptr, "%d %f %f", &stripNo, &ped_offset, &ped_rms);
+
+	  // if settings are for us
+	  if(cModeRocId != ROCID)
+	    {
+	      /* printf("Skipping pedestal settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId); */
+	      continue;
+	    }
 
 	  if(n == 3)
 	    {
@@ -685,7 +692,7 @@ vtp_mpd_setup()
 	  // if settings are for us
 	  if(cModeRocId != ROCID)
 	  {
-	    printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId);
+	    /* printf("Skipping common-mode settings not for us (us=%d, file=%d)\n", ROCID, cModeRocId); */
 	    continue;
 	  }
 
@@ -799,9 +806,11 @@ vtpMpdReset()
 void
 vtpMpdCleanup()
 {
-
   if(apvbuffer)
+  {
     free(apvbuffer);
+    apvbuffer = NULL;
+  }
 }
 
 /*

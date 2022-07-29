@@ -8,6 +8,8 @@
  *
  */
 
+#define VTPMPD_BANK 3561
+
 /* Event Buffer definitions */
 #define MAX_EVENT_LENGTH 40960
 #define MAX_EVENT_POOL   100
@@ -29,7 +31,6 @@ int blklevel = 1;
    Type 0xff11 is RAW trigger with timestamps (64 bits)
 */
 int trigBankType = 0xff10;
-int firstEvent;
 
 /* Data necessary to connect using EMUSocket
 #define CMSG_MAGIC_INT1 0x634d7367
@@ -53,30 +54,20 @@ rocDownload()
   const char *z7file="fe_vtp_vxs_readout_z7.bin";
   const char *v7file="fe_vtp_v7_mpd.bin";
 
-  firstEvent = 1;
-
-  if(vtpInit(VTP_INIT_CLK_VXS_250))
-    {
-      printf("vtpInit() **FAILED**. User should not continue.\n");
-      return;
-    }
-
-#define RELOAD_FIRMWARE
-#ifdef RELOAD_FIRMWARE
   /* Load firmware here */
   sprintf(buf, "%s/%s", fwpath, z7file);
+  printf("loading Z7 firmware %s...\n", buf);
   if(vtpZ7CfgLoad(buf) != OK)
     {
       printf("Z7 programming failed... (%s)\n", buf);
     }
 
-  printf("loading V7 firmware...\n");
+  printf("loading V7 firmware %s...\n", buf);
   sprintf(buf, "%s/%s", fwpath, v7file);
   if(vtpV7CfgLoad(buf) != OK)
     {
       printf("V7 programming failed... (%s)\n", buf);
     }
-#endif /* RELOAD_FIRMWARE */
 
 
   if(vtpInit(VTP_INIT_CLK_VXS_250))
@@ -117,25 +108,15 @@ rocPrestart()
 
   VTPflag = 0;
 
-  printf("%s: rol->usrConfig = %s\n",
-	 __func__, rol->usrConfig);
+  printf("%s: rol->usrString = %s\n",
+	 __func__, rol->usrString);
 
   /* Read Config file and Intialize VTP */
   vtpInitGlobals();
-  if(rol->usrConfig)
-    vtpConfig(rol->usrConfig);
+  if(rol->usrString)
+    vtpConfig(rol->usrString);
   else
     vtpConfig("/home/sbs-onl/vtp/cfg/sbsvtp3.config");
-
-  /* Get EB connection info to program the VTP TCP stack */
-  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
-  emuport = rol->rlinkP->port;
-
-  /* Temp override for netcat */
-  /* emuip = 0x81396DA2; */
-  /* emuport = 6006; */
-
-  printf(" EMU IP = 0x%08x  Port= %d\n",emuip, emuport);
 
   /* Reset the ROC */
   vtpRocReset(0);
@@ -144,56 +125,36 @@ rocPrestart()
   vtpTiLinkInit();
 
 
-   /* Setup the VTP 10Gig network registers manually and connect */
-  {
-    unsigned char ipaddr[4];
-    unsigned char subnet[4];
-    unsigned char gateway[4];
-    unsigned char mac[6];
-    unsigned char destip[4];
-    unsigned short destipport;
+  /* Write in the Destination IP and port obtained from platform */
+  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
+  emuport = rol->rlinkP->port;
+  daLogMsg("INFO"," EMU IP = 0x%08x  Port= %d\n",emuip, emuport);
 
-    // VTP IP Address
-    ipaddr[0]=129; ipaddr[1]=57; ipaddr[2]=192; ipaddr[3]=110;
-    // Subnet mask
-    subnet[0]=255; subnet[1]=255; subnet[2]=255; subnet[3]=0;
-    // Gateway
-    gateway[0]=129; gateway[1]=57; gateway[2]=192; gateway[3]=1;
-    // VTP MAC
-    mac[0]=0xce; mac[1]=0xba; mac[2]=0xf0; mac[3]=0x03; mac[4]=0x00; mac[5]=0x3c;
+   /* Readback the VTP 10Gig network registers and connect */
+  unsigned char ipaddr[4];
+  unsigned char subnet[4];
+  unsigned char gateway[4];
+  unsigned char mac[6];
+  unsigned char destipaddr[4];
+  unsigned short destipport;
 
-    /* Set VTP connection registers */
-    vtpRocSetTcpCfg(
-	  ipaddr,
-          subnet,
-          gateway,
-          mac,
-          emuip,
-          emuport
-      );
+  /*Read it back to to make sure */
+  vtpRocGetTcpCfg(ipaddr, subnet, gateway, mac, destipaddr, &destipport);
 
-      /*Read it back to to make sure */
-       vtpRocGetTcpCfg(
-          ipaddr,
-          subnet,
-          gateway,
-          mac,
-          destip,
-          &destipport
-      );
-       printf(" Readback of TCP CLient Registers:\n");
-       printf("   ipaddr=%d.%d.%d.%d\n",ipaddr[0],ipaddr[1],ipaddr[2],ipaddr[3]);
-       printf("   subnet=%d.%d.%d.%d\n",subnet[0],subnet[1],subnet[2],subnet[3]);
-       printf("   gateway=%d.%d.%d.%d\n",gateway[0],gateway[1],gateway[2],gateway[3]);
-       printf("   mac=%02x:%02x:%02x:%02x:%02x:%02x\n",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
-       printf("   destip=%d.%d.%d.%d\n",destip[0],destip[1],destip[2],destip[3]);
-       printf("   destipport=%d\n",destipport);
+  /* Set the emu ip and port */
+  vtpRocSetTcpCfg(ipaddr, subnet, gateway, mac, emuip, emuport);
+
+  printf(" Readback of TCP CLient Registers:\n");
+  printf("   ipaddr=%d.%d.%d.%d\n",ipaddr[0],ipaddr[1],ipaddr[2],ipaddr[3]);
+  printf("   subnet=%d.%d.%d.%d\n",subnet[0],subnet[1],subnet[2],subnet[3]);
+  printf("   gateway=%d.%d.%d.%d\n",gateway[0],gateway[1],gateway[2],gateway[3]);
+  printf("   mac=%02x:%02x:%02x:%02x:%02x:%02x\n",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+  printf("   emuip=0x%08x\n",emuip);
+  printf("   emuport=%d\n",emuport);
 
 
-      /* Make the Connection . Pass Data needed to complete connection with the EMU */
-       vtpRocTcpConnect(1,emuData,8);
-  }
-
+  /* Make the Connection . Pass Data needed to complete connection with the EMU */
+  vtpRocTcpConnect(1,emuData,8);
 
   /* Reset and Configure the MIG and ROC Event Builder */
   vtpRocMigReset();
@@ -206,7 +167,7 @@ rocPrestart()
 
   /* Initialize and program the ROC Event Builder*/
   vtpRocEbStop();
-  vtpRocEbInit(5,6,7);   // define bank1 tag = 5, bank2 tag = 6, bank3 tag = 7
+  vtpRocEbInit(VTPMPD_BANK,6,7);   // define bank1 tag = 3562, bank2 tag = 6, bank3 tag = 7
   vtpRocEbConfig(ppInfo,0);  // blocklevel=0 will skip setting the block level
 
 
@@ -351,8 +312,6 @@ rocTrigger(int EVTYPE)
    by the software ROC.
 
 */
-
-
 
 }
 
