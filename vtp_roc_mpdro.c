@@ -54,7 +54,7 @@ char VTP_CONFIG_FILENAME[250];
 
 /* default config filenames, if they are not defined in COOL */
 #define DEFAULT_APV_CONFIG "/home/sbs-onl/cfg/vtp_config_TS.cfg"
-#define DEFAULT_VTP_CONFIG "/home/sbs-onl/vtp/cfg/sbsvtp2.config"
+#define DEFAULT_VTP_CONFIG "/home/sbs-onl/vtp/cfg/sbsvtp3.config"
 #define APV_TEMP_CONFIG "/tmp/vtp_out.cfg"
 
 
@@ -159,9 +159,10 @@ rocPrestart()
   /* Write in the Destination IP and port obtained from platform */
 //  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
 //  hacked for now since there is only 1 rol->rlinkP->net value supported by the platform, but we need two since we are using two different NICs
-  if(ROCID==2) emuip = vtpRoc_inet_addr("192.168.2.1");
-  if(ROCID==4) emuip = vtpRoc_inet_addr("192.168.1.1");
-  
+  /* if(ROCID==2) emuip = vtpRoc_inet_addr("192.168.2.1"); */
+  /* if(ROCID==4) emuip = vtpRoc_inet_addr("192.168.1.1"); */
+
+  emuip = vtpRoc_inet_addr(rol->rlinkP->net);
   emuport = rol->rlinkP->port;
 //  emuport = 7001; // for testing w/ netcat
   daLogMsg("INFO"," EMU IP = 0x%08x  Port= %d\n",emuip, emuport);
