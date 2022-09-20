@@ -271,7 +271,7 @@ rocPrestart()
 
   /* Insert Config Files into User Event 137 */
   /* Pointer gymnastics ahead. */
-//#define UEVENT137
+#define UEVENT137
 #ifdef UEVENT137
   uint32_t *ueBuffer; /* User event buffer */
   int maxsize = 3 * 1024 * 1024;
@@ -287,7 +287,7 @@ rocPrestart()
   uint32_t *uebufp = ueBuffer;
   uebufp += 2; /* Bump by 2 words for the Event Length and Header */
 
-  unsigned int uetype = 138; /*  1/alpha  How has this not been taken yet? */
+  unsigned int uetype = 137; /*  1/alpha  How has this not been taken yet? */
   int inum = 0, nwords = 0;
 
   /* Fill the buffer with a string bank of the file contents */

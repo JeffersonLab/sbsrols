@@ -124,8 +124,8 @@ vtp_mpd_setup()
   int rval = OK;
   uint64_t errSlotMask = 0;
   /* Index is the mpd / fiber... value mask if ADCs with APV config errors */
-  uint32_t apvConfigErrorMask[VTP_MPD_MAX];
-  uint32_t apvErrorTypeMask[VTP_MPD_MAX]; /* 0 : mpd init, 1: apv not found , 2: config */
+  uint32_t apvConfigErrorMask[VTP_MPD_MAX]; /* ADC channel that failed configuration */
+  uint32_t apvErrorTypeMask[VTP_MPD_MAX]; /* Error Type bits: 0 = mpd init, 1 = apv not found , 2 = config */
   uint32_t configAdcMask[VTP_MPD_MAX]; /* ADC channels that are configured in cfg file */
   memset(apvConfigErrorMask, 0 , sizeof(apvConfigErrorMask));
   memset(apvErrorTypeMask, 0 , sizeof(apvErrorTypeMask));
@@ -410,8 +410,8 @@ vtp_mpd_setup()
 
       for(id = 0; id < VTP_MPD_MAX; id++)
 	{
-	  /* Skip  the MPD with unbroken APV */
-	  if(apvConfigErrorMask[id] == 0)
+	  /* Skip MPD / Fiber without errors */
+	  if(apvErrorTypeMask[id] == 0)
 	    continue;
 
 	  /* Have not opened the reject File yet */
@@ -476,7 +476,7 @@ vtp_mpd_setup()
 		}
 	    }
 	  fprintf(rejectFile, " (Total: %2d   Disabled: %2d   NotFound: %2d)\n",
-		  enabledBits+missingBits, disabledBits, missingBits);
+		  enabledBits+missingBits+disabledBits, disabledBits, missingBits);
 
 	  daLogMsg("ERROR", "MPD %d: %d APVs Disabled",
 		   id, disabledBits+missingBits);
