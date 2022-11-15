@@ -15,9 +15,14 @@
  *
  */
 
+#ifndef VME_MAX_SLOTS
+#define VME_MAX_SLOTS 21
+#endif
 
 static uint32_t previousBusy = 0;  /* Busy slot busy mask from previous call */
 static uint32_t *slotBusyCount=NULL;    /* Count of repeated busy for each slot */
+static uint32_t slotBusyWarnThreshold = 5;
+static uint32_t slotBusyErrorThreshold = 10;
 
 int32_t
 extraBusyCheckInit(int32_t iflag)
@@ -27,15 +32,15 @@ extraBusyCheckInit(int32_t iflag)
 
   if(slotBusyCount == NULL)
     {
-      slotBusyCount = (uint32_t *) malloc((MAX_VME_SLOTS + 1) * sizeof(uint32_t));
+      slotBusyCount = (uint32_t *) malloc((VME_MAX_SLOTS + 1) * sizeof(uint32_t));
       if(slotBusyCount == NULL)
 	{
 	  printf("%s: ERROR allocating memory for slotBusyCount\n",
 		 __func__);
-	  rval = -1;
+	  return -1;
 	}
-      memset(slotBusyCount, 0, (MAX_VME_SLOTS + 1) * sizeof(uint32_t));
     }
+  memset(slotBusyCount, 0, (VME_MAX_SLOTS + 1) * sizeof(uint32_t));
 
   return rval;
 }
@@ -49,10 +54,13 @@ extraBusyCheckReset(int32_t rflag)
   return 0;
 }
 
-static void
-warnSlotBusy(int32_t slotID)
+void
+extraBusyCheckClear(int32_t cflag)
 {
+  if(slotBusyCount != NULL)
+    memset(slotBusyCount, 0, (VME_MAX_SLOTS + 1) * sizeof(uint32_t));
 
+  previousBusy = 0;
 }
 
 
@@ -71,10 +79,18 @@ updateSlotCounts(uint32_t busyMask)
 	{
 	  slotBusyCount[islot]++;
 
-	  if(slotBusyCount[islot] > slotBusyWarnThreshold)
+	  if(slotBusyCount[islot] == slotBusyWarnThreshold)
 	    {
 	      daLogMsg("WARN","ROC %d SLOT %d BUSY",
 		       ROCID, islot);
+	    }
+	  if(slotBusyCount[islot] >= slotBusyErrorThreshold)
+	    {
+	      if((slotBusyCount[islot] % slotBusyErrorThreshold) == 0)
+		{
+		  daLogMsg("ERROR","ROC %d SLOT %d BUSY",
+			   ROCID, islot);
+		}
 	    }
 	}
     }
