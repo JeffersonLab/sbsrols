@@ -11,6 +11,8 @@
 #define MAX_EVENT_POOL     100
 #define MAX_EVENT_LENGTH   1024*240      /* Size in Bytes */
 
+#define TI_FLAG TI_INIT_SKIP_FIRMWARE_CHECK
+
 #ifdef TI_MASTER
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
@@ -290,7 +292,7 @@ rocPrestart()
      {
       .EdgeResolution = 100,
       .EdgeDetectionConfig = 3,
-      .WindowWidth = 2000,
+      .WindowWidth = 1200,
       .WindowOffset = -2000
      };
 
@@ -325,7 +327,7 @@ rocPrestart()
       tdc1190SetTriggerMatchingMode(itdc);
       tdc1190SetEdgeResolution(itdc,100);
       tdc1190SetEdgeDetectionConfig(itdc,3);
-      tdc1190SetWindowWidth(itdc,2000); // ns
+      tdc1190SetWindowWidth(itdc,1200); // ns
       tdc1190SetWindowOffset(itdc,-2000); // ns
 #endif
       tdc1190SetGeoAddress(itdc, list[itdc] >> 19);
@@ -653,7 +655,7 @@ rocTrigger(int arg)
 #endif // USE_C1190
 
   /* Check for SYNC Event or Bufferlevel == 1 */
-  if((tiGetSyncEventFlag() == 1) || (tiGetBlockBufferLevel() == 1))
+  if((tiGetBlockSyncFlag() == 1) || (tiGetBlockBufferLevel() == 1))
     {
       int iflush = 0, maxflush = 10;
       /* Check for data available */

@@ -148,6 +148,20 @@ rocPrestart()
 
   tiStatus(0);
 
+
+  printf(" Adding test user event \n");
+  UEOPEN(500,BT_BANK,0);
+
+  CBOPEN(1,BT_UI4,0);
+  *rol->dabufp++ = 0x11112222;
+  *rol->dabufp++ = 0x55556666;
+  *rol->dabufp++ = 0xaabbccdd;
+  CBCLOSE;
+
+  UECLOSE;
+
+
+
   printf("rocPrestart: User Prestart Executed\n");
 
 }
