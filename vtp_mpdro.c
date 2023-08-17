@@ -111,10 +111,10 @@ vtp_mpd_setup()
   vtpMpdConfigLoad();
 
   vtpMpdFiberReset();
-  vtpMpdFiberLinkReset(0xffffffffffffffff);
+  vtpMpdFiberLinkReset(0xffffffffffffffffULL);
 
   /* ... the VTP holds all the MPD event build stuff in reset... */
-  vtpMpdDisable(0xffffffffffffffff);
+  vtpMpdDisable(0xffffffffffffffffULL);
 
   /* setups up the MPD (so they clear their buffers) ... */
 
