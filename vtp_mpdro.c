@@ -485,6 +485,12 @@ vtp_mpd_setup()
 	  /* Write the updated mask */
 	  mpdSetApvEnableMask(id, updated_mask);
 
+	  /* Remove the fiber, if MPD error or All APVs rejected */
+	  if((updated_mask == 0) || (apvErrorTypeMask[id] & (1 << 0)))
+	    {
+	      chanmask &= ~(1ull << id);
+	    }
+
 	}
 
       /* Have not opened the reject File yet */
@@ -499,7 +505,13 @@ vtp_mpd_setup()
 
   /* ...then VTP can enable the MPD event building,  */
   vtpFiberMaskToInit = mpdGetVTPFiberMask();
-  printf("VTP fiber mask: 0x%16llx\n", vtpFiberMaskToInit);
+  if(chanmask != vtpFiberMaskToInit)
+    {
+      printf("VTP Fiber Mask (Corrected): 0x%16llx\n", chanmask);
+      vtpFiberMaskToInit = chanmask;
+    }
+  else
+    printf("VTP fiber mask: 0x%16llx\n", vtpFiberMaskToInit);
 
   while(vtpFiberMaskToInit != 0){
     if((vtpFiberMaskToInit & 0x1) == 1)
