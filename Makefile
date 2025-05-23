@@ -9,7 +9,7 @@
 #
 # Uncomment DEBUG line for debugging info ( -g and -Wall )
 DEBUG=1
-QUIET=1
+QUIET=0
 #
 ifeq ($(QUIET),1)
         Q = @
@@ -18,9 +18,15 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= event_list.so ti_master_list.so ti_slave_list.so ti_slave5_list.so
+VMEROL			= CDet_list.so ti_list.so  \
+			CDet_ts_list.so  \
+			CDet_ts_cosmics_list.so  \
+		 vfTDC_list.so \
+vfTDC_slave_list.so \
+			CDet_ts_scalers_list.so \
+                        ecal_list.so 
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -ldalmaRol
+ROLLIBS			= -lvetroc  -lsd -lts  -ldalmaRol -L${LINUXVME_LIB} -lvfTDC -lfadc
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -75,9 +81,17 @@ all:  $(VMEROL) $(SOBJS)
 	@echo " CCRL   $@"
 	${Q}${CCRL} $<
 
+event_list.so: event_list.c
+	@echo " CC     $@"
+	${Q}${CC} ${CODA_CFLAGS} -o $@ $<
+
+test_list_v3.so: test_list_v3.c
+	@echo " CC     $@"
+	${Q}${CC} ${CODA_CFLAGS} -o $@ $<
+
 %.so: %.c
 	@echo " CC     $@"
-	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
 %slave_list.so: %list.c
@@ -85,15 +99,28 @@ all:  $(VMEROL) $(SOBJS)
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
 
-%master_list.so: %list.c
-	@echo " CC     $@"
-	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_MASTER \
-		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
-
 %slave5_list.so: %list.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE5 \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+
+%scalers_list.so: %list.c #../scaler_server/shmLib.o ../scaler_server/linuxScalerLib.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
+	-DTI_MASTER -DINIT_NAME=$(@:.so=__init) \
+	-DINIT_NAME_POLL=$(@:.so=__poll) -DVETROC_SCALERS -DVETROC_SCALER_BANKS \
+	../scaler_server/shmLib.o ../scaler_server/vmeDSClib.o \
+	../scaler_server/sis3820Lib.o -o $@ $<
+
+%scalers_slave_list.so: %list.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) \
+	-DTI_SLAVE -DINIT_NAME=$(@:.so=__init) \
+	-DINIT_NAME_POLL=$(@:.so=__poll) -DVETROC_SCALERS -DVETROC_SCALER_BANKS \
+	../scaler_server/shmLib.o ../scaler_server/vmeDSClib.o \
+	../scaler_server/sis3820Lib.o -o $@ $<
+
 
 clean distclean:
 	${Q}rm -f  $(VMEROL) $(SOBJS) $(CFILES) *~ $(DEPS) $(DEPS) *.d.*
@@ -108,4 +135,4 @@ clean distclean:
 
 -include $(DEPS)
 
-.PHONY: all ti_list.so
+.PHONY: all

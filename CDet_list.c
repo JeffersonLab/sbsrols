@@ -8,7 +8,7 @@
 
 /* Event Buffer definitions */
 #define MAX_EVENT_POOL     10
-#define MAX_EVENT_LENGTH   1024*64      /* Size in Bytes */
+#define MAX_EVENT_LENGTH   1024*64*16      /* Size in Bytes */
 
 /* TI_MASTER / TI_SLAVE defined in Makefile */
 
@@ -16,39 +16,35 @@
 /* EXTernal trigger source (e.g. front panel ECL input), POLL for available data */
 #define TI_READOUT TI_READOUT_EXT_POLL
 #else
-#ifdef TI_SLAVE5
-#define TI_SLAVE
-#define SLAVE_FLAG TI_INIT_SLAVE_FIBER_5
-#endif
 /* TS trigger source (e.g. fiber), POLL for available data */
 #define TI_READOUT TI_READOUT_TS_POLL
+//#define TI_FLAG TI_INIT_SLAVE_FIBER_5
+
+
 #endif
-
-/* TI VME address, or 0 for Auto Initialize (search for TI by slot) */
-#define TI_ADDR  0
-
-/* Skip the firmware check while we're testing 3v11.1 */
-#ifdef SLAVE_FLAG
-#define TI_FLAG TI_INIT_SKIP_FIRMWARE_CHECK|SLAVE_FLAG
-#else
-#define TI_FLAG TI_INIT_SKIP_FIRMWARE_CHECK
-#endif
-
-#define TI_A32_BASE 0x09000000
-
+#define TI_ADDR  0 /* Auto initialize (search for TI by slot */
 
 /* Measured longest fiber length in system */
-#define FIBER_LATENCY_OFFSET 0x4A
+#define FIBER_LATENCY_OFFSET 0x50
 
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
+#include "sdLib.h"
+#include "vfTDCLib.h"
 
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
-#define BUFFERLEVEL 1
+#define BUFFERLEVEL 10
 
 /* Library to pipe stdout to daLogMsg */
 #include "dalmaRolLib.h"
+
+/*
+  enable triggers (random or fixed rate) from internal pulser
+ */
+/*#define INTRANDOMPULSER*/
+/* #define INTFIXEDPULSER */
+
 
 /*
   Global to configure the trigger source
@@ -56,10 +52,12 @@
       1 : TI random pulser
       2 : TI fixed pulser
 
-  Set with rocSetTriggerSource(int source);
-*/
-int rocTriggerSource = 1;
+  Set with rocSetTriggerSource(int source);*/
+int rocTriggerSource = 0;
 void rocSetTriggerSource(int source); // routine prototype
+
+
+
 
 /****************************************
  *  DOWNLOAD
@@ -68,6 +66,8 @@ void
 rocDownload()
 {
   int stat;
+  int itdc = 0, roFlag = 1;
+  extern int nvfTDC;
 
   /* Setup Address and data modes for DMA transfers
    *
@@ -95,17 +95,14 @@ rocDownload()
    *      TI_TRIGGER_TSREV2    4  Ribbon cable from Legacy TS module
    *      TI_TRIGGER_PULSER    5  TI Internal Pulser (Fixed rate and/or random)
    */
-  if(rocTriggerSource == 0)
-    {
-      tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
-    }
-  else
-    {
-      tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
-    }
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  tiSetTriggerSource(TI_TRIGGER_PULSER); /* TS Inputs enabled */
+#else
+  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+#endif
 
   /* Enable set specific TS input bits (1-6) */
-  tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
+  tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 | TI_TSINPUT_6);
 
   /* Load the trigger table that associates
    *  pins 21/22 | 23/24 | 25/26 : trigger1
@@ -122,19 +119,37 @@ rocDownload()
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
 #endif
-
-  tiSetTriggerPulse(1,0,25,0);
-
-  /* Set prompt output width (127 + 2) * 4 = 516 ns */
-  tiSetPromptTriggerWidth(127);
-
-  if(strcmp("vtp",rol->usrString) == 0)
+  tiSetSlavePort(1);
+  /* Init the SD library so we can get status info */
+  stat = sdInit(0);
+  if(stat==0)
     {
-      printf("%s: usrString = %s: Adding VTP\n",
-	     __func__, rol->usrString);
-      /* Add VTP as a slave */
-      tiRocEnable(2);
+      sdSetActiveVmeSlots(0);
+      sdStatus(0);
     }
+
+  /*************************************************************/
+  /* VFTDC initialization                                      */
+  /*************************************************************/
+  extern unsigned int vfTDCA32Base;
+
+  vfTDCA32Base=0x09000000;
+  vfTDCInit(3<<19, 1<<19, 16,
+	    VFTDC_INIT_VXS_SYNCRESET |
+	    VFTDC_INIT_VXS_TRIG      |
+	    VFTDC_INIT_VXS_CLKSRC);
+
+  int window_width   = 13; /* 250 = 250*4ns = 1000ns */
+  int window_latency = 804; /* 100 = 100*4ns =  400ns */
+  vfTDCSetWindowParamters(0, window_latency, window_width);
+
+  for(itdc = 0; itdc < nvfTDC; itdc++)
+    {
+      vfTDCSetEdgeReadout(vfTDCSlot(itdc),1,1);
+    }
+  
+  vfTDCStatus(0,0);
+
 
   tiStatus(0);
 
@@ -149,9 +164,10 @@ void
 rocPrestart()
 {
 
-  DALMAGO;
+  //  DALMAGO;
+  vfTDCStatus(0,0);
   tiStatus(0);
-  DALMASTOP;
+  // DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -201,33 +217,32 @@ rocGo()
 #endif
 
   /* Enable/Set Block Level on modules, if needed, here */
-  if(rocTriggerSource != 0)
-    {
-      printf("************************************************************\n");
-      daLogMsg("INFO","TI Configured for Internal Pulser Triggers");
-      printf("************************************************************\n");
 
-      if(rocTriggerSource == 1)
-	{
-	  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
-	  	  tiSetRandomTrigger(1,0xd);
-	  //tiSetRandomTrigger(1,0x4);
-	}
 
-      if(rocTriggerSource == 2)
-	{
-	  /*    Enable fixed rate with period (ns)
-		120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
-		- arg2 = 0xffff - Continuous
-		- arg2 < 0xffff = arg2 times
-	  */
-	  tiSoftTrig(1,0xffff,100,0);
-	}
-    }
+#ifdef TI_MASTER
+#if (defined (INTFIXEDPULSER) | defined(INTRANDOMPULSER))
+  printf("************************************************************\n");
+  printf("%s: TI Configured for Internal Pulser Triggers\n",
+	 __func__);
+  printf("************************************************************\n");
+#endif
 
-  DALMAGO;
-  tiStatus(0);
-  DALMASTOP;
+  /* Example: How to start internal pulser trigger */
+#ifdef INTRANDOMPULSER
+  /* Enable Random at rate 500kHz/(2^7) = ~3.9kHz */
+  tiSetRandomTrigger(1,0x7);
+#elif defined (INTFIXEDPULSER)
+  /*
+    Enable fixed rate with period (ns)
+    120 +30*700*(1024^0) = 21.1 us (~47.4 kHz)
+     - arg2 = 0xffff - Continuous
+     - arg2 < 0xffff = arg2 times
+  */
+  tiSoftTrig(1,0xffff,700,0);
+#endif
+#endif
+
+
 }
 
 /****************************************
@@ -237,21 +252,21 @@ void
 rocEnd()
 {
 
-  if(rocTriggerSource == 1)
-    {
-      /* Disable random trigger */
-      tiDisableRandomTrigger();
-    }
+#ifdef TI_MASTER
+  /* Example: How to stop internal pulser trigger */
+#ifdef INTRANDOMPULSER
+  /* Disable random trigger */
+  tiDisableRandomTrigger();
+#elif defined (INTFIXEDPULSER)
+  /* Disable Fixed Rate trigger */
+  tiSoftTrig(1,0,700,0);
+#endif
+#endif
 
-  if(rocTriggerSource == 2)
-    {
-      /* Disable Fixed Rate trigger */
-      tiSoftTrig(1,0,100,0);
-    }
-
-  DALMAGO;
+  // DALMAGO;
+ vfTDCStatus(0,0);
   tiStatus(0);
-  DALMASTOP;
+  // DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -263,10 +278,13 @@ rocEnd()
 void
 rocTrigger(int arg)
 {
-  int dCnt;
+  int ii,slot;
+ int itdc = 0, roFlag = 1;
+      extern int nvfTDC;
 
+  int stat, dCnt, len=0, idata, blkReady=0,timeout=0;
   /* Set TI output 1 high for diagnostics */
-  /*BQ  tiSetOutputPort(1,0,0,0);*/
+  tiSetOutputPort(1,0,0,0);
 
   /* Readout the trigger block from the TI
      Trigger Block MUST be readout first */
@@ -289,16 +307,48 @@ rocTrigger(int arg)
   *dma_dabufp++ = 0xcebaf222;
   BANKCLOSE;
 
-  /* Set TI output 0 low */
-  /*BQ    tiSetOutputPort(0,0,0,0);*/
+  /* Readout vfTDC data */
+  BANKOPEN(9,BT_UI4,0);
+  blkReady = vfTDCBReady(0);
+  if(blkReady==0 && timeout<100)
+    {
+      blkReady = vfTDCBReady(0);
+      timeout++;
+    }
 
+  if(timeout>=100)
+    {
+      printf("%s: Data not ready in vfTDC.\n",__FUNCTION__);
+      return;
+    }
+
+  /* e.g. Max number of words = Blocklevel * (10 hits per channel + 10 other words) */
+  //  dCnt = vfTDCReadBlock(0,dma_dabufp,BLOCKLEVEL*((10*192+10)),1);
+  vfTDCResetToken(0);
+  for(itdc = 0; itdc < nvfTDC; itdc++)
+    {
+      dCnt = vfTDCReadBlock(vfTDCSlot(itdc), dma_dabufp, (10*1024)>>2, roFlag);
+      if(dCnt<=0)
+	{
+	  printf("No data or error.  dCnt = %d\n",dCnt);
+	}
+      else
+	{
+	  dma_dabufp += dCnt;
+	}
+    }
+  BANKCLOSE;
+
+
+  /* Set TI output 0 low */
+  tiSetOutputPort(0,0,0,0);
+  
 }
 
 void
 rocLoad()
 {
-  dalmaInit(1);
-  tiA32Base = TI_A32_BASE;
+  //dalmaInit(1);
 }
 
 void
@@ -308,9 +358,8 @@ rocCleanup()
 #ifdef TI_MASTER
   tiResetSlaveConfig();
 #endif
-  dalmaClose();
+  // dalmaClose();
 }
-
 
 void
 rocSetTriggerSource(int source)
@@ -343,8 +392,9 @@ rocSetTriggerSource(int source)
 }
 
 
+
 /*
   Local Variables:
-  compile-command: "make -k ti_a32_slave_list.so ti_a32_slave5_list.so"
+  compile-command: "make -k -B ti_list.so ti_slave_list.so"
   End:
  */

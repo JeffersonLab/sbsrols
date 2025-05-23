@@ -8,7 +8,7 @@
 
 /* Event Buffer definitions */
 #define MAX_EVENT_POOL     10
-#define MAX_EVENT_LENGTH   1024*64      /* Size in Bytes */
+#define MAX_EVENT_LENGTH   1024*64*16      /* Size in Bytes */
 
 /* TI_MASTER / TI_SLAVE defined in Makefile */
 
@@ -18,6 +18,9 @@
 #else
 /* TS trigger source (e.g. fiber), POLL for available data */
 #define TI_READOUT TI_READOUT_TS_POLL
+//#define TI_FLAG TI_INIT_SLAVE_FIBER_5
+
+
 #endif
 #define TI_ADDR  0 /* Auto initialize (search for TI by slot */
 
@@ -27,6 +30,8 @@
 #include "dmaBankTools.h"   /* Macros for handling CODA banks */
 #include "tiprimary_list.c" /* Source required for CODA readout lists using the TI */
 #include "sdLib.h"
+static unsigned int sdScanMask = 0;
+#include "vfTDCLib.h"
 
 /* Define initial blocklevel and buffering level */
 #define BLOCKLEVEL 1
@@ -38,8 +43,28 @@
 /*
   enable triggers (random or fixed rate) from internal pulser
  */
-#define INTRANDOMPULSER
+/*#define INTRANDOMPULSER*/
 /* #define INTFIXEDPULSER */
+
+
+/*
+  Global to configure the trigger source
+      0 : tsinputs
+      1 : TI random pulser
+      2 : TI fixed pulser
+
+  Set with rocSetTriggerSource(int source);*/
+
+static unsigned int vetrocSlotMask=0;
+
+
+int rocTriggerSource = 0;
+
+
+void rocSetTriggerSource(int source); // routine prototype
+
+
+
 
 /****************************************
  *  DOWNLOAD
@@ -48,7 +73,9 @@ void
 rocDownload()
 {
   int stat;
-
+  int itdc = 0, roFlag = 1;
+  extern int nvfTDC;
+  dalmaInit(1);
   /* Setup Address and data modes for DMA transfers
    *
    *  vmeDmaConfig(addrType, dataType, sstMode);
@@ -82,7 +109,7 @@ rocDownload()
 #endif
 
   /* Enable set specific TS input bits (1-6) */
-  tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 );
+  tiEnableTSInput( TI_TSINPUT_1 | TI_TSINPUT_2 | TI_TSINPUT_6);
 
   /* Load the trigger table that associates
    *  pins 21/22 | 23/24 | 25/26 : trigger1
@@ -99,7 +126,7 @@ rocDownload()
   /* Set Trigger Buffer Level */
   tiSetBlockBufferLevel(BUFFERLEVEL);
 #endif
-
+  tiSetSlavePort(1);
   /* Init the SD library so we can get status info */
   stat = sdInit(0);
   if(stat==0)
@@ -108,7 +135,60 @@ rocDownload()
       sdStatus(0);
     }
 
+  /*************************************************************/
+  /* VFTDC initialization                                      */
+  /*************************************************************/
+  extern unsigned int vfTDCA32Base;
+
+  vfTDCA32Base=0x09000000;
+  //
+  // Looking at ~/linuxvme/vfTDC/vfTDCLib.c, the way that the following statement works
+  // is that the first argument is the first slot to read out (shifted 19 bits), the
+  // second argument is the INCREMENT between TDC slots, and the
+  // third argument is the total number of TDCs to read out.
+  // 
+  // vfTDCInit(8<<19, 11<<19, 2, ...) will start at slot 8, increment by 11, and read 2 TDCs.  So, Slot 8 and Slot 19
+  //
+  // vfTDCInit(3<<19, 1<<19, 17, ...) will start at slot 3, increment by 1, and read 17 TDCs.  So, Slots 3 to 19, inclusive.
+  //
+  vfTDCInit(3<<19, 1<<19, 18,
+	    VFTDC_INIT_VXS_SYNCRESET |
+	    VFTDC_INIT_VXS_TRIG      |
+	    VFTDC_INIT_VXS_CLKSRC);
+
+
+  int window_width   = 13; /* 13 = 13*4ns = 52 ns */
+  int window_latency = 804; /* 804 = 804*4ns =  3216 ns = 3.216 us */
+
+  // Calling vfTDCSetWindoParamters with first argument 0 will loop through all TDC's that have been initialized
+  vfTDCSetWindowParamters(0, window_latency, window_width);
+
+  // Note:  the call above to vfTDCInit will initialize the TDCs, and within that, nvfTDC will get incremented
+  //  for each slot.  So, now we can use that as a loop termination variable!
+  //
+  for(itdc = 0; itdc < nvfTDC; itdc++)
+    {
+      vfTDCSetEdgeReadout(vfTDCSlot(itdc),1,1);
+      vetrocSlotMask |= (1<<vfTDCSlot(itdc)); /* Add it to the mask */
+      vfTDCSetWindowParamters(itdc, window_latency, window_width);
+      vfTDCStatus(itdc,0);
+    }
+  
+
+  int ref_window_width = 50; // define a window width of 200ns  for readout of Slot 20, reference TDC
+  int ref_window_latency = 25; // define a latency of 100 ns for Slot 10
+  vfTDCSetWindowParamters(20, ref_window_latency, ref_window_width);
+   
+
+  printf("vetrocSlotMask=0x%08x\n", vetrocSlotMask);
+
+  sdScanMask |= vetrocSlotMask;
+
+  sdSetBusyVmeSlots(sdScanMask, 0); 
+
   tiStatus(0);
+
+  sdStatus(0);
 
   printf("rocDownload: User Download Executed\n");
 
@@ -121,9 +201,10 @@ void
 rocPrestart()
 {
 
-  //  DALMAGO;
+  DALMAGO;
+  vfTDCStatus(0,0);
   tiStatus(0);
-  // DALMASTOP;
+  DALMASTOP;
 
   printf("rocPrestart: User Prestart Executed\n");
 
@@ -219,9 +300,10 @@ rocEnd()
 #endif
 #endif
 
-  // DALMAGO;
+  DALMAGO;
+ vfTDCStatus(0,0);
   tiStatus(0);
-  // DALMASTOP;
+  DALMASTOP;
 
   printf("rocEnd: Ended after %d blocks\n",tiGetIntCount());
 
@@ -233,8 +315,11 @@ rocEnd()
 void
 rocTrigger(int arg)
 {
-  int dCnt;
+  int ii,slot;
+ int itdc = 0, roFlag = 1;
+      extern int nvfTDC;
 
+  int stat, dCnt, len=0, idata, blkReady=0,timeout=0;
   /* Set TI output 1 high for diagnostics */
   tiSetOutputPort(1,0,0,0);
 
@@ -259,15 +344,48 @@ rocTrigger(int arg)
   *dma_dabufp++ = 0xcebaf222;
   BANKCLOSE;
 
+  /* Readout vfTDC data */
+  BANKOPEN(9,BT_UI4,0);
+  blkReady = vfTDCBReady(0);
+  if(blkReady==0 && timeout<100)
+    {
+      blkReady = vfTDCBReady(0);
+      timeout++;
+    }
+
+  if(timeout>=100)
+    {
+      printf("%s: Data not ready in vfTDC.\n",__FUNCTION__);
+      return;
+    }
+
+  /* e.g. Max number of words = Blocklevel * (10 hits per channel + 10 other words) */
+  //  dCnt = vfTDCReadBlock(0,dma_dabufp,BLOCKLEVEL*((10*192+10)),1);
+  vfTDCResetToken(0);
+  for(itdc = 0; itdc < nvfTDC; itdc++)
+    {
+      dCnt = vfTDCReadBlock(vfTDCSlot(itdc), dma_dabufp, (10*1024)>>2, roFlag);
+      if(dCnt<=0)
+	{
+	  printf("No data or error.  dCnt = %d\n",dCnt);
+	}
+      else
+	{
+	  dma_dabufp += dCnt;
+	}
+    }
+  BANKCLOSE;
+
+
   /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
-
+  
 }
 
 void
 rocLoad()
 {
-  //dalmaInit(1);
+  dalmaInit(1);
 }
 
 void
@@ -277,8 +395,39 @@ rocCleanup()
 #ifdef TI_MASTER
   tiResetSlaveConfig();
 #endif
-  // dalmaClose();
+  dalmaClose();
 }
+
+void
+rocSetTriggerSource(int source)
+{
+#ifdef TI_MASTER
+  if(TIPRIMARYflag == 1)
+    {
+      printf("%s: ERROR: Trigger Source already enabled.  Ignoring change to %d.\n",
+	     __func__, source);
+    }
+  else
+    {
+      rocTriggerSource = source;
+
+      if(rocTriggerSource == 0)
+	{
+	  tiSetTriggerSource(TI_TRIGGER_TSINPUTS); /* TS Inputs enabled */
+	}
+      else
+	{
+	  tiSetTriggerSource(TI_TRIGGER_PULSER); /* Internal Pulser */
+	}
+
+      daLogMsg("INFO","Setting trigger source (%d)", rocTriggerSource);
+    }
+#else
+  printf("%s: ERROR: TI is not Master  Ignoring change to %d.\n",
+	 __func__, source);
+#endif
+}
+
 
 
 /*
