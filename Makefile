@@ -9,7 +9,7 @@
 #
 # Uncomment DEBUG line for debugging info ( -g and -Wall )
 DEBUG=1
-QUIET=1
+QUIET=0
 #
 ifeq ($(QUIET),1)
         Q = @
@@ -18,10 +18,14 @@ else
 endif
 
 # Plug in your primary readout lists here.. CRL are found automatically
-VMEROL			= bbgrinch_list.so bbgrinch_slave_list.so ti_list.so ti_slave_list.so \
-	bbgrinch_scalers_list.so bbgrinch_scalers_slave_list.so
+VMEROL			= CDet_list.so CDet_slave_list.so ti_list.so ti_slave_list.so \
+			CDet_ts_list.so CDet_ts_slave_list.so \
+			CDet_ts_cosmics_list.so CDet_ts_cosmics_slave_list.so \
+			CDet_scalers_list.so CDet_scalers_slave_list.so vfTDC_list.so \
+vfTDC_slave_list.so \
+			CDet_ts_scalers_list.so CDet_ts_scalers_slave_list.so 
 # Add shared library dependencies here.  (jvme, ti, are already included)
-ROLLIBS			= -lvetroc -lc792 -lsd -lts -lfadc -ldalmaRol
+ROLLIBS			= -lvetroc -lc792 -lsd -lts -lfadc -ldalmaRol -lvfTDC
 
 ifdef CODA_VME
 INC_CODA_VME	= -isystem${CODA_VME}/include
@@ -93,6 +97,12 @@ test_list_v3.so: test_list_v3.c
 	@echo " CC     $@"
 	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE \
 		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
+%slave5_list.so: %list.c
+	@echo " CC     $@"
+	${Q}$(CC) -fpic -shared  $(CFLAGS) $(INCS) $(LIBS) -DTI_SLAVE5 \
+		-DINIT_NAME=$(@:.so=__init) -DINIT_NAME_POLL=$(@:.so=__poll) -o $@ $<
+
 
 %scalers_list.so: %list.c #../scaler_server/shmLib.o ../scaler_server/linuxScalerLib.c
 	@echo " CC     $@"
