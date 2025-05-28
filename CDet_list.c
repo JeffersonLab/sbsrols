@@ -146,8 +146,9 @@ rocDownload()
   for(itdc = 0; itdc < nvfTDC; itdc++)
     {
       vfTDCSetEdgeReadout(vfTDCSlot(itdc),1,1);
+      vfTDCResetToken(vfTDCSlot(itdc));
     }
-  
+
   vfTDCStatus(0,0);
 
 
@@ -309,40 +310,50 @@ rocTrigger(int arg)
 
   /* Readout vfTDC data */
   BANKOPEN(9,BT_UI4,0);
-  blkReady = vfTDCBReady(0);
-  if(blkReady==0 && timeout<100)
+  int multiboard_read = 1, roFlag = 1, maxdata = 0;
+  maxdata = (10*1024)>>2;
+
+  if(multiboard_read==1)
     {
-      blkReady = vfTDCBReady(0);
-      timeout++;
+      roFlag = 2;
     }
 
-  if(timeout>=100)
-    {
-      printf("%s: Data not ready in vfTDC.\n",__FUNCTION__);
-      return;
-    }
+  uint32_t scan_mask = vfTDCScanMask();
+  uint32_t slots_ready = vfTDCGBlockReady(scan_mask, 100);
 
-  /* e.g. Max number of words = Blocklevel * (10 hits per channel + 10 other words) */
-  //  dCnt = vfTDCReadBlock(0,dma_dabufp,BLOCKLEVEL*((10*192+10)),1);
-  vfTDCResetToken(0);
-  for(itdc = 0; itdc < nvfTDC; itdc++)
+  if(slots_ready != scan_mask)
     {
-      dCnt = vfTDCReadBlock(vfTDCSlot(itdc), dma_dabufp, (10*1024)>>2, roFlag);
-      if(dCnt<=0)
+      printf("VFTDC slots_ready != scan_mask (0x%08x != 0x%08x)\n",
+	     slots_ready, scan_mask);
+    }
+  else
+    {
+      if(multiboard_read == 1)
+	vfTDCResetToken(0);
+
+      int itdc;
+      for(itdc = 0; itdc < nvfTDC; itdc++)
 	{
-	  printf("No data or error.  dCnt = %d\n",dCnt);
+	  dCnt = vfTDCReadBlock(vfTDCSlot(itdc), dma_dabufp, maxdata, roFlag);
+	  if(dCnt<=0)
+	    {
+	      printf("vfTDCReadBlock: ERROR: No data or error.  dCnt = %d\n",dCnt);
+	    }
+	  else
+	    {
+	      dma_dabufp += dCnt;
+	    }
+	  if(roFlag == 2)
+	    break;
 	}
-      else
-	{
-	  dma_dabufp += dCnt;
-	}
+
     }
   BANKCLOSE;
 
 
   /* Set TI output 0 low */
   tiSetOutputPort(0,0,0,0);
-  
+
 }
 
 void
